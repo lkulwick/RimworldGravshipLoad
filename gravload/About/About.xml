@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>Gravload</name>
+  <packageId>deep.gravload</packageId>
+  <author>deep</author>
+  <supportedVersions>
+    <li>1.6</li>
+  </supportedVersions>
+  <description><![CDATA[
+Coordinate colony and gravship logistics with managed stockpiles and a streamlined cargo loading interface.
+
+Subject to change while core systems are under active development.
+  ]]></description>
+</ModMetaData>

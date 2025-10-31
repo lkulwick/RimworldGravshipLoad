@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Patch>
+  <!-- Example operation template. Remove this block when adding real patches. -->
+  <!--
+  <Operation Class="PatchOperationAdd">
+    <xpath>Defs/ThingDef[defName="Example"]</xpath>
+    <value>
+      <costList>
+        <ThingDefCountClass>
+          <thingDef>Steel</thingDef>
+          <count>25</count>
+        </ThingDefCountClass>
+      </costList>
+    </value>
+  </Operation>
+  -->
+</Patch>

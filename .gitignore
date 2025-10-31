@@ -1,0 +1,6 @@
+# Build outputs
+Assemblies/
+
+# VS Code build artifacts
+.vscode/obj/
+.vscode/bin/

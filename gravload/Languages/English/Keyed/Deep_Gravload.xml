@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <DeepGravload_CommandManageToggle>Gravload management</DeepGravload_CommandManageToggle>
+  <DeepGravload_CommandManageToggleDesc>Mark this storage as managed by the gravship. Colonists will not use or modify its contents until the toggle is switched off.</DeepGravload_CommandManageToggleDesc>
+  <DeepGravload_StorageLockedDesc>This storage is currently managed by the gravship.</DeepGravload_StorageLockedDesc>
+  <DeepGravload_StorageLockedReason>Disable gravload management to edit these storage settings.</DeepGravload_StorageLockedReason>
+</LanguageData>
