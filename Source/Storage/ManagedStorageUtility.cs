@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using RimWorld;
+using SeparateStocks;
 using Verse;
 
 namespace Deep_Gravload
@@ -16,7 +17,23 @@ namespace Deep_Gravload
                 return null;
             }
 
-            return map.GetComponent<GravloadMapComponent>();
+            StockManagerComponent stockManager = map.GetComponent<StockManagerComponent>();
+            if (stockManager == null)
+            {
+                stockManager = new StockManagerComponent(map);
+                map.components.Add(stockManager);
+                stockManager.FinalizeInit();
+            }
+
+            GravloadMapComponent component = map.GetComponent<GravloadMapComponent>();
+            if (component == null)
+            {
+                component = new GravloadMapComponent(map);
+                map.components.Add(component);
+                component.FinalizeInit();
+            }
+
+            return component;
         }
 
         public static bool ShouldOfferManagedToggle(ISlotGroupParent parent)
@@ -82,6 +99,56 @@ namespace Deep_Gravload
             }
 
             return list;
+        }
+
+        public static bool TryFindEngineForParent(ISlotGroupParent parent, Map map, out Building_GravEngine engine)
+        {
+            engine = null;
+
+            if (parent == null || map == null)
+            {
+                return false;
+            }
+
+            List<IntVec3> cells = GetSlotCells(parent);
+            if (cells.Count == 0)
+            {
+                return false;
+            }
+
+            CollectGravEngines(map);
+            for (int i = 0; i < ScratchEngines.Count; i++)
+            {
+                Building_GravEngine candidate = ScratchEngines[i];
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                HashSet<IntVec3> substructure = candidate.AllConnectedSubstructure;
+                if (substructure == null || substructure.Count == 0)
+                {
+                    continue;
+                }
+
+                bool allInside = true;
+                for (int j = 0; j < cells.Count; j++)
+                {
+                    if (!substructure.Contains(cells[j]))
+                    {
+                        allInside = false;
+                        break;
+                    }
+                }
+
+                if (allInside)
+                {
+                    engine = candidate;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool IsInsideGravship(ISlotGroupParent parent, Map map)
@@ -194,5 +261,27 @@ namespace Deep_Gravload
 
             return null;
         }
+
+        public static void NotifyParentSettingsChanged(ISlotGroupParent parent)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            Building_Storage storage = parent as Building_Storage;
+            if (storage != null)
+            {
+                storage.Notify_SettingsChanged();
+                return;
+            }
+
+            Zone_Stockpile zone = parent as Zone_Stockpile;
+            if (zone != null)
+            {
+                zone.Notify_SettingsChanged();
+            }
+        }
     }
 }
+

@@ -35,7 +35,6 @@ namespace Deep_Gravload
 
             List<Gizmo> gizmos = ManagedStorageUtility.Materialize(__result);
             AppendToggleGizmo(__instance, tracker, gizmos);
-            ReplaceStorageCommandIfManaged(tracker.IsManaged(__instance), gizmos);
             __result = gizmos;
         }
 
@@ -54,33 +53,6 @@ namespace Deep_Gravload
                 tracker.ToggleBuilding(storage);
             };
             gizmos.Add(command);
-        }
-
-        private static void ReplaceStorageCommandIfManaged(bool isManaged, List<Gizmo> gizmos)
-        {
-            if (!isManaged)
-            {
-                return;
-            }
-
-            TaggedString storageLabel = "CommandOpenStorageSettings".Translate();
-            for (int i = 0; i < gizmos.Count; i++)
-            {
-                Command_Action action = gizmos[i] as Command_Action;
-                if (action == null)
-                {
-                    continue;
-                }
-
-                if (!action.defaultLabel.Equals(storageLabel))
-                {
-                    continue;
-                }
-
-                action.defaultDesc = "DeepGravload_StorageLockedDesc".Translate();
-                action.Disable("DeepGravload_StorageLockedReason".Translate());
-                return;
-            }
         }
     }
 
@@ -121,6 +93,22 @@ namespace Deep_Gravload
             }
 
             tracker.OnStoredThingLost(newItem);
+        }
+    }
+
+    [HarmonyPatch(typeof(Building_Storage), nameof(Building_Storage.DeSpawn))]
+    public static class Patch_Building_Storage_DeSpawn
+    {
+        public static void Postfix(Building_Storage __instance)
+        {
+            Map map = __instance?.MapHeld;
+            if (map == null)
+            {
+                return;
+            }
+
+            GravloadMapComponent tracker = ManagedStorageUtility.GetTracker(map);
+            tracker?.NotifyParentDestroyed(__instance);
         }
     }
 }

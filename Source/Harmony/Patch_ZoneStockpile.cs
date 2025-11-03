@@ -35,7 +35,6 @@ namespace Deep_Gravload
 
             List<Gizmo> gizmos = ManagedStorageUtility.Materialize(__result);
             AppendToggleGizmo(__instance, tracker, gizmos);
-            ReplaceStorageCommandIfManaged(tracker.IsManaged(__instance), gizmos);
             __result = gizmos;
         }
 
@@ -54,33 +53,6 @@ namespace Deep_Gravload
                 tracker.ToggleZone(zone);
             };
             gizmos.Add(command);
-        }
-
-        private static void ReplaceStorageCommandIfManaged(bool isManaged, List<Gizmo> gizmos)
-        {
-            if (!isManaged)
-            {
-                return;
-            }
-
-            TaggedString storageLabel = "CommandOpenStorageSettings".Translate();
-            for (int i = 0; i < gizmos.Count; i++)
-            {
-                Command_Action action = gizmos[i] as Command_Action;
-                if (action == null)
-                {
-                    continue;
-                }
-
-                if (!action.defaultLabel.Equals(storageLabel))
-                {
-                    continue;
-                }
-
-                action.defaultDesc = "DeepGravload_StorageLockedDesc".Translate();
-                action.Disable("DeepGravload_StorageLockedReason".Translate());
-                return;
-            }
         }
     }
 
@@ -121,6 +93,52 @@ namespace Deep_Gravload
             }
 
             tracker.OnStoredThingLost(newItem);
+        }
+    }
+
+    [HarmonyPatch(typeof(Zone_Stockpile), nameof(Zone_Stockpile.AddCell))]
+    public static class Patch_Zone_Stockpile_AddCell
+    {
+        public static void Postfix(Zone_Stockpile __instance)
+        {
+            GravloadMapComponent tracker = ManagedStorageUtility.GetTracker(__instance?.Map);
+            if (tracker == null)
+            {
+                return;
+            }
+
+            tracker.NotifyZoneCellsChanged(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(Zone_Stockpile), nameof(Zone_Stockpile.RemoveCell))]
+    public static class Patch_Zone_Stockpile_RemoveCell
+    {
+        public static void Postfix(Zone_Stockpile __instance)
+        {
+            GravloadMapComponent tracker = ManagedStorageUtility.GetTracker(__instance?.Map);
+            if (tracker == null)
+            {
+                return;
+            }
+
+            tracker.NotifyZoneCellsChanged(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(Zone_Stockpile), nameof(Zone_Stockpile.PostDeregister))]
+    public static class Patch_Zone_Stockpile_PostDeregister
+    {
+        public static void Postfix(Zone_Stockpile __instance)
+        {
+            Map map = __instance?.Map;
+            if (map == null)
+            {
+                return;
+            }
+
+            GravloadMapComponent tracker = ManagedStorageUtility.GetTracker(map);
+            tracker?.NotifyParentDestroyed(__instance);
         }
     }
 }

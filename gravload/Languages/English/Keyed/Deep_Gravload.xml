@@ -1,7 +1,26 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <LanguageData>
   <DeepGravload_CommandManageToggle>Gravload management</DeepGravload_CommandManageToggle>
-  <DeepGravload_CommandManageToggleDesc>Mark this storage as managed by the gravship. Colonists will not use or modify its contents until the toggle is switched off.</DeepGravload_CommandManageToggleDesc>
-  <DeepGravload_StorageLockedDesc>This storage is currently managed by the gravship.</DeepGravload_StorageLockedDesc>
-  <DeepGravload_StorageLockedReason>Disable gravload management to edit these storage settings.</DeepGravload_StorageLockedReason>
+  <DeepGravload_CommandManageToggleDesc>Assign this storage to the gravship stock. Colonists may still consume its contents, but they won&apos;t haul items in or out unless commanded through the gravship cargo interface.</DeepGravload_CommandManageToggleDesc>
+
+  <DeepGravload_CommandLoadCargo>Gravship cargo</DeepGravload_CommandLoadCargo>
+  <DeepGravload_CommandLoadCargoDesc>Manage gravship cargo transfers between the colony and the gravship.</DeepGravload_CommandLoadCargoDesc>
+  <DeepGravload_CommandLoadCargoDisabled>Cargo loading is already in progress.</DeepGravload_CommandLoadCargoDisabled>
+  <DeepGravload_CommandLoadCargoNoStorage>No stockpiles or shelves are set as gravcore managed.</DeepGravload_CommandLoadCargoNoStorage>
+
+  <DeepGravload_WindowTitle>Load gravship cargo</DeepGravload_WindowTitle>
+  <DeepGravload_SourceLabel>Colony stock</DeepGravload_SourceLabel>
+  <DeepGravload_DestinationLabel>Gravship storage</DeepGravload_DestinationLabel>
+  <DeepGravload_SourceCountLabel>Available</DeepGravload_SourceCountLabel>
+  <DeepGravload_ButtonLoad>Begin loading</DeepGravload_ButtonLoad>
+
+  <DeepGravload_Error_NoEngine>No gravship engine was found.</DeepGravload_Error_NoEngine>
+  <DeepGravload_Error_NoItemsSelected>Select at least one item to load.</DeepGravload_Error_NoItemsSelected>
+  <DeepGravload_Error_NoManagedCells>No managed gravload storage is available for this gravship.</DeepGravload_Error_NoManagedCells>
+  <DeepGravload_Error_LoadInProgress>Loading is already underway for this gravship.</DeepGravload_Error_LoadInProgress>
+  <DeepGravload_Error_ItemOffMap>{0} is not on this map.</DeepGravload_Error_ItemOffMap>
+  <DeepGravload_Error_ItemAlreadyManaged>{0} is already managed by the gravship.</DeepGravload_Error_ItemAlreadyManaged>
+  <DeepGravload_Error_ItemAlreadyQueued>{0} is already queued for gravship loading.</DeepGravload_Error_ItemAlreadyQueued>
+  <DeepGravload_Error_NoValidItems>No valid items were selected.</DeepGravload_Error_NoValidItems>
+  <DeepGravload_Error_NotEnoughSpace>The gravship&apos;s managed storage does not have enough free space.</DeepGravload_Error_NotEnoughSpace>
 </LanguageData>

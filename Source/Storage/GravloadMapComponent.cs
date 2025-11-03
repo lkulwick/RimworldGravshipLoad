@@ -1,21 +1,19 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
+using SeparateStocks;
 using Verse;
+using Verse.AI;
 
 namespace Deep_Gravload
 {
     public class GravloadMapComponent : MapComponent
     {
-        private List<ManagedBuildingRecord> buildingRecords = new List<ManagedBuildingRecord>();
-        private List<ManagedZoneRecord> zoneRecords = new List<ManagedZoneRecord>();
-
-        private readonly Dictionary<IntVec3, int> managedCellRefCounts = new Dictionary<IntVec3, int>();
-        private readonly Dictionary<Thing, bool> trackedForbiddenStates = new Dictionary<Thing, bool>();
-
-        private readonly List<IntVec3> tmpCells = new List<IntVec3>();
-        private readonly List<Thing> tmpThings = new List<Thing>();
-
-        private int tickCounter;
+        private StockManagerComponent stockManager;
+        private readonly Dictionary<Building_GravEngine, int> engineToStockId = new Dictionary<Building_GravEngine, int>();
+        private readonly Dictionary<int, Building_GravEngine> stockIdToEngine = new Dictionary<int, Building_GravEngine>();
+        private readonly HashSet<ISlotGroupParent> managedParents = new HashSet<ISlotGroupParent>();
+        private readonly Dictionary<ISlotGroupParent, StoredStorageSettings> savedSettings = new Dictionary<ISlotGroupParent, StoredStorageSettings>();
+        private List<ManagedParentState> savedSettingsState = new List<ManagedParentState>();
 
         public GravloadMapComponent(Map map) : base(map)
         {
@@ -24,701 +22,563 @@ namespace Deep_Gravload
         public override void ExposeData()
         {
             base.ExposeData();
-            Scribe_Collections.Look(ref this.buildingRecords, "buildingRecords", LookMode.Deep);
-            Scribe_Collections.Look(ref this.zoneRecords, "zoneRecords", LookMode.Deep);
+            if (Scribe.mode == LoadSaveMode.Saving)
+            {
+                this.savedSettingsState.Clear();
+                foreach (KeyValuePair<ISlotGroupParent, StoredStorageSettings> pair in this.savedSettings)
+                {
+                    ISlotGroupParent parent = pair.Key;
+                    StoredStorageSettings settings = pair.Value;
+                    if (parent == null || settings == null)
+                    {
+                        continue;
+                    }
+
+                    ManagedParentState state = new ManagedParentState
+                    {
+                        Settings = settings
+                    };
+
+                    if (parent is Building_Storage building)
+                    {
+                        state.Building = building;
+                    }
+                    else if (parent is Zone_Stockpile zone)
+                    {
+                        state.Zone = zone;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    this.savedSettingsState.Add(state);
+                }
+            }
+
+            Scribe_Collections.Look(ref this.savedSettingsState, "managedParentSettings", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
-                this.RebuildManagedState();
+                this.ResolveStockManager();
+                this.RestoreSavedSettings();
+                this.RebuildMappings();
             }
         }
 
         public override void FinalizeInit()
         {
             base.FinalizeInit();
-            this.RebuildManagedState();
-        }
-
-        public override void MapComponentTick()
-        {
-            base.MapComponentTick();
-            this.tickCounter++;
-            if (this.tickCounter % 120 != 0)
-            {
-                return;
-            }
-
-            this.RefreshManagedItems();
+            this.ResolveStockManager();
+            this.RestoreSavedSettings();
+            this.RebuildMappings();
         }
 
         public bool IsManaged(Building_Storage storage)
         {
-            if (storage == null)
-            {
-                return false;
-            }
-
-            ManagedBuildingRecord record = this.FindBuildingRecord(storage);
-            if (record == null)
-            {
-                return false;
-            }
-
-            return record.IsManaged;
+            return storage != null && this.managedParents.Contains(storage);
         }
 
         public bool IsManaged(Zone_Stockpile zone)
         {
-            if (zone == null)
+            return zone != null && this.managedParents.Contains(zone);
+        }
+
+        public void ToggleBuilding(Building_Storage storage)
+        {
+            if (storage == null || storage.Map != this.map)
+            {
+                return;
+            }
+
+            this.ToggleParent(storage);
+        }
+
+        public void ToggleZone(Zone_Stockpile zone)
+        {
+            if (zone == null || zone.Map != this.map)
+            {
+                return;
+            }
+
+            this.ToggleParent(zone);
+        }
+
+        public void NotifyZoneCellsChanged(Zone_Stockpile zone)
+        {
+            if (zone == null || zone.Map != this.map || !this.managedParents.Contains(zone))
+            {
+                return;
+            }
+
+            this.stockManager?.NotifyParentCellsChanged(zone);
+        }
+
+        public void NotifyParentDestroyed(ISlotGroupParent parent)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            if (!this.managedParents.Contains(parent))
+            {
+                return;
+            }
+
+            this.managedParents.Remove(parent);
+            this.savedSettings.Remove(parent);
+            this.stockManager?.UnregisterParent(parent);
+        }
+
+        public void OnStoredThingReceived(ISlotGroupParent parent, Thing thing)
+        {
+            // No additional handling required; pawn hauling to managed stock is governed by SeparateStocks policies.
+        }
+
+        public void OnStoredThingLost(Thing thing)
+        {
+            // No-op; state is tracked by stock manager and transfer operations.
+        }
+
+        public void NotifyItemPlacedInManagedCell(Thing thing)
+        {
+            // No-op; forbidding is no longer required with SeparateStocks gating.
+        }
+
+        public bool IsThingInManagedCell(Thing thing)
+        {
+            if (thing == null)
             {
                 return false;
             }
 
-            ManagedZoneRecord record = this.FindZoneRecord(zone);
+            int stockId = this.stockManager?.GetStockOfThing(thing) ?? StockConstants.ColonyStockId;
+            return stockId != StockConstants.ColonyStockId;
+        }
+
+        public bool IsManagedCell(IntVec3 cell)
+        {
+            int stockId = this.stockManager?.GetStockOfCell(cell) ?? StockConstants.ColonyStockId;
+            return stockId != StockConstants.ColonyStockId;
+        }
+
+        public bool TryGetEngineForThing(Thing thing, out Building_GravEngine engine)
+        {
+            engine = null;
+            if (thing == null)
+            {
+                return false;
+            }
+
+            int stockId = this.stockManager?.GetStockOfThing(thing) ?? StockConstants.ColonyStockId;
+            if (stockId == StockConstants.ColonyStockId)
+            {
+                return false;
+            }
+
+            return this.stockIdToEngine.TryGetValue(stockId, out engine) && engine != null && engine.Map == this.map;
+        }
+
+        public bool HasActiveOperations => this.stockManager != null && this.stockManager.HasActiveOperations;
+
+        public bool HasActiveOperationsForEngine(Building_GravEngine engine)
+        {
+            if (engine == null)
+            {
+                return false;
+            }
+
+            int stockId;
+            if (!this.TryGetStockIdForEngine(engine, out stockId))
+            {
+                return false;
+            }
+
+            return this.stockManager.HasActiveOperationsForStock(stockId);
+        }
+
+        public IEnumerable<Thing> GetPendingThings()
+        {
+            if (this.stockManager == null)
+            {
+                yield break;
+            }
+
+            foreach (Thing thing in this.stockManager.GetPendingThings())
+            {
+                yield return thing;
+            }
+        }
+
+        public bool CanHandleThing(Pawn pawn, Thing thing, bool forced)
+        {
+            return this.stockManager != null && this.stockManager.CanHandleThing(pawn, thing, forced);
+        }
+
+        public bool TryAssignHaulJob(Pawn pawn, Thing thing, bool forced, out StockJobTicket ticket)
+        {
+            ticket = null;
+            return this.stockManager != null && this.stockManager.TryAssignHaulJob(pawn, thing, forced, out ticket);
+        }
+
+        public StockJobTicket GetTicket(Pawn pawn)
+        {
+            return this.stockManager?.GetTicket(pawn);
+        }
+
+        public void ReleaseTicket(Pawn pawn, bool succeeded, int deliveredAmount)
+        {
+            this.stockManager?.ReleaseTicket(pawn, succeeded, deliveredAmount);
+        }
+
+        public void ClearTicketsForPawn(Pawn pawn)
+        {
+            this.stockManager?.ClearTicketsForPawn(pawn);
+        }
+
+        public bool TryStartLoadOperation(Building_GravEngine engine, List<ThingCount> loadSelections, List<ThingCount> unloadSelections, out string failureReason)
+        {
+            failureReason = null;
+            if (engine == null)
+            {
+                failureReason = "DeepGravload_Error_NoEngine".Translate();
+                return false;
+            }
+
+            if (!this.TryEnsureStockForEngine(engine, out int stockId))
+            {
+                failureReason = "DeepGravload_Error_NoManagedCells".Translate();
+                return false;
+            }
+
+            if (!this.HasManagedCellsForEngine(engine))
+            {
+                failureReason = "DeepGravload_Error_NoManagedCells".Translate();
+                return false;
+            }
+
+            if (this.stockManager.HasActiveOperationsForStock(stockId))
+            {
+                failureReason = "DeepGravload_Error_LoadInProgress".Translate();
+                return false;
+            }
+
+            if (this.stockManager.TryStartTransferOperation(stockId, loadSelections, unloadSelections, out failureReason))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool HasManagedCellsForEngine(Building_GravEngine engine)
+        {
+            if (engine == null || this.stockManager == null)
+            {
+                return false;
+            }
+
+            if (!this.TryEnsureStockForEngine(engine, out int stockId))
+            {
+                return false;
+            }
+
+            StockRecord record;
+            if (!this.stockManager.TryGetStock(stockId, out record) || record == null)
+            {
+                return false;
+            }
+
+            return record.CachedCells.Count > 0;
+        }
+
+        public void CancelOperationsForEngine(Building_GravEngine engine)
+        {
+            if (engine == null || this.stockManager == null)
+            {
+                return;
+            }
+
+            if (this.TryGetStockIdForEngine(engine, out int stockId))
+            {
+                this.stockManager.CancelOperationsForStock(stockId);
+            }
+        }
+
+        private void ToggleParent(ISlotGroupParent parent)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            if (this.managedParents.Contains(parent))
+            {
+                this.DisableParent(parent);
+            }
+            else
+            {
+                this.EnableParent(parent);
+            }
+        }
+
+        private void EnableParent(ISlotGroupParent parent)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            Map parentMap = parent.Map;
+            if (parentMap != this.map)
+            {
+                return;
+            }
+
+            Building_GravEngine engine;
+            if (!ManagedStorageUtility.TryFindEngineForParent(parent, this.map, out engine))
+            {
+                Messages.Message("DeepGravload_CommandLoadCargoNoStorage".Translate(), MessageTypeDefOf.RejectInput, false);
+                return;
+            }
+
+            if (!this.TryEnsureStockForEngine(engine, out int stockId))
+            {
+                Messages.Message("DeepGravload_CommandLoadCargoNoStorage".Translate(), MessageTypeDefOf.RejectInput, false);
+                return;
+            }
+
+            StorageSettings settings = parent.GetStoreSettings();
+            if (settings != null)
+            {
+                StoredStorageSettings snapshot = new StoredStorageSettings();
+                snapshot.Capture(settings);
+                this.savedSettings[parent] = snapshot;
+            }
+
+            this.stockManager.RegisterParent(stockId, parent);
+            this.managedParents.Add(parent);
+        }
+
+        private void DisableParent(ISlotGroupParent parent)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            this.stockManager.UnregisterParent(parent);
+            this.managedParents.Remove(parent);
+
+            StorageSettings settings = parent.GetStoreSettings();
+            if (settings != null && this.savedSettings.TryGetValue(parent, out StoredStorageSettings snapshot) && snapshot != null)
+            {
+                snapshot.ApplyTo(settings);
+                ManagedStorageUtility.NotifyParentSettingsChanged(parent);
+            }
+
+            this.savedSettings.Remove(parent);
+        }
+
+        private bool TryEnsureStockForEngine(Building_GravEngine engine, out int stockId)
+        {
+            stockId = StockConstants.ColonyStockId;
+            if (engine == null)
+            {
+                return false;
+            }
+
+            if (this.TryGetStockIdForEngine(engine, out stockId))
+            {
+                return true;
+            }
+
+            this.ResolveStockManager();
+            if (this.stockManager == null)
+            {
+                return false;
+            }
+
+            StockRecord existing = this.FindStockForEngine(engine);
+            if (existing == null)
+            {
+                StockMetadata metadata = new StockMetadata
+                {
+                    OwnerThing = engine,
+                    Label = engine.LabelCap
+                };
+                stockId = this.stockManager.CreateStock(metadata);
+            }
+            else
+            {
+                stockId = existing.StockId;
+            }
+
+            this.engineToStockId[engine] = stockId;
+            this.stockIdToEngine[stockId] = engine;
+
+            if (existing == null && this.stockManager.TryGetStock(stockId, out StockRecord created))
+            {
+                created.Metadata.OwnerThing = engine;
+            }
+
+            return true;
+        }
+
+        private bool TryGetStockIdForEngine(Building_GravEngine engine, out int stockId)
+        {
+            stockId = StockConstants.ColonyStockId;
+            if (engine == null)
+            {
+                return false;
+            }
+
+            if (this.engineToStockId.TryGetValue(engine, out stockId))
+            {
+                return true;
+            }
+
+            StockRecord record = this.FindStockForEngine(engine);
             if (record == null)
             {
                 return false;
             }
 
-            return record.IsManaged;
+            stockId = record.StockId;
+            this.engineToStockId[engine] = stockId;
+            this.stockIdToEngine[stockId] = engine;
+            return true;
         }
 
-        public void ToggleBuilding(Building_Storage storage)
+        private StockRecord FindStockForEngine(Building_GravEngine engine)
         {
-            if (storage == null)
-            {
-                return;
-            }
-
-            if (storage.Map != this.map)
-            {
-                return;
-            }
-
-            ManagedBuildingRecord record = this.GetOrCreateBuildingRecord(storage);
-            if (record.IsManaged)
-            {
-                this.DisableBuilding(record);
-            }
-            else
-            {
-                this.EnableBuilding(record);
-            }
-        }
-
-        public void ToggleZone(Zone_Stockpile zone)
-        {
-            if (zone == null)
-            {
-                return;
-            }
-
-            if (zone.Map != this.map)
-            {
-                return;
-            }
-
-            ManagedZoneRecord record = this.GetOrCreateZoneRecord(zone);
-            if (record.IsManaged)
-            {
-                this.DisableZone(record);
-            }
-            else
-            {
-                this.EnableZone(record);
-            }
-        }
-
-        public void OnStoredThingReceived(ISlotGroupParent parent, Thing thing)
-        {
-            if (thing == null)
-            {
-                return;
-            }
-
-            if (!thing.Spawned)
-            {
-                return;
-            }
-
-            if (thing.Faction != Faction.OfPlayer)
-            {
-                return;
-            }
-
-            bool managed = false;
-            Building_Storage building = parent as Building_Storage;
-            if (building != null)
-            {
-                managed = this.IsManaged(building);
-            }
-            else
-            {
-                Zone_Stockpile zone = parent as Zone_Stockpile;
-                if (zone != null)
-                {
-                    managed = this.IsManaged(zone);
-                }
-            }
-
-            if (!managed)
-            {
-                return;
-            }
-
-            this.EnsureThingForbidden(thing);
-        }
-
-        public void OnStoredThingLost(Thing thing)
-        {
-            if (thing == null)
-            {
-                return;
-            }
-
-            bool originalState;
-            if (!this.trackedForbiddenStates.TryGetValue(thing, out originalState))
-            {
-                return;
-            }
-
-            if (!thing.Destroyed)
-            {
-                ForbidUtility.SetForbidden(thing, originalState, false);
-            }
-
-            this.trackedForbiddenStates.Remove(thing);
-        }
-
-        private void EnableBuilding(ManagedBuildingRecord record)
-        {
-            Building_Storage storage = record.Storage;
-            if (storage == null)
-            {
-                return;
-            }
-
-            StorageSettings settings = storage.GetStoreSettings();
-            if (settings == null)
-            {
-                return;
-            }
-
-            if (record.SavedSettings == null)
-            {
-                record.SavedSettings = new StoredStorageSettings();
-            }
-
-            record.SavedSettings.Capture(settings);
-            this.ApplyDisallowAll(settings, storage);
-
-            record.IsManaged = true;
-
-            List<IntVec3> cells = storage.AllSlotCellsList();
-            this.AddManagedCells(cells);
-            this.EnsureCellsForbidden(cells);
-        }
-
-        private void DisableBuilding(ManagedBuildingRecord record)
-        {
-            Building_Storage storage = record.Storage;
-            if (storage == null)
-            {
-                return;
-            }
-
-            record.IsManaged = false;
-
-            StorageSettings settings = storage.GetStoreSettings();
-            if (settings != null && record.SavedSettings != null)
-            {
-                record.SavedSettings.ApplyTo(settings);
-            }
-
-            storage.Notify_SettingsChanged();
-
-            List<IntVec3> cells = storage.AllSlotCellsList();
-            this.RemoveManagedCells(cells);
-            this.RestoreForbiddenStates(cells);
-        }
-
-        private void EnableZone(ManagedZoneRecord record)
-        {
-            Zone_Stockpile zone = record.Zone;
-            if (zone == null)
-            {
-                return;
-            }
-
-            StorageSettings settings = zone.GetStoreSettings();
-            if (settings == null)
-            {
-                return;
-            }
-
-            if (record.SavedSettings == null)
-            {
-                record.SavedSettings = new StoredStorageSettings();
-            }
-
-            record.SavedSettings.Capture(settings);
-            this.ApplyDisallowAll(settings, zone);
-
-            record.IsManaged = true;
-
-            List<IntVec3> cells = zone.AllSlotCellsList();
-            this.AddManagedCells(cells);
-            this.EnsureCellsForbidden(cells);
-        }
-
-        private void DisableZone(ManagedZoneRecord record)
-        {
-            Zone_Stockpile zone = record.Zone;
-            if (zone == null)
-            {
-                return;
-            }
-
-            record.IsManaged = false;
-
-            StorageSettings settings = zone.GetStoreSettings();
-            if (settings != null && record.SavedSettings != null)
-            {
-                record.SavedSettings.ApplyTo(settings);
-            }
-
-            zone.Notify_SettingsChanged();
-
-            List<IntVec3> cells = zone.AllSlotCellsList();
-            this.RemoveManagedCells(cells);
-            this.RestoreForbiddenStates(cells);
-        }
-
-        private void ApplyDisallowAll(StorageSettings settings, IStoreSettingsParent parent)
-        {
-            if (settings == null)
-            {
-                return;
-            }
-
-            settings.filter.SetDisallowAll(null, null);
-            if (parent != null)
-            {
-                parent.Notify_SettingsChanged();
-            }
-        }
-
-        private void AddManagedCells(List<IntVec3> cells)
-        {
-            if (cells == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < cells.Count; i++)
-            {
-                IntVec3 cell = cells[i];
-                if (!cell.InBounds(this.map))
-                {
-                    continue;
-                }
-
-                int count;
-                if (this.managedCellRefCounts.TryGetValue(cell, out count))
-                {
-                    this.managedCellRefCounts[cell] = count + 1;
-                }
-                else
-                {
-                    this.managedCellRefCounts.Add(cell, 1);
-                }
-            }
-        }
-
-        private void RemoveManagedCells(List<IntVec3> cells)
-        {
-            if (cells == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < cells.Count; i++)
-            {
-                IntVec3 cell = cells[i];
-                int count;
-                if (!this.managedCellRefCounts.TryGetValue(cell, out count))
-                {
-                    continue;
-                }
-
-                count--;
-                if (count <= 0)
-                {
-                    this.managedCellRefCounts.Remove(cell);
-                }
-                else
-                {
-                    this.managedCellRefCounts[cell] = count;
-                }
-            }
-        }
-
-        private void EnsureCellsForbidden(List<IntVec3> cells)
-        {
-            if (cells == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < cells.Count; i++)
-            {
-                IntVec3 cell = cells[i];
-                if (!cell.InBounds(this.map))
-                {
-                    continue;
-                }
-
-                List<Thing> thingList = cell.GetThingList(this.map);
-                for (int j = 0; j < thingList.Count; j++)
-                {
-                    Thing thing = thingList[j];
-                    if (!thing.Spawned)
-                    {
-                        continue;
-                    }
-
-                    if (thing.Faction != Faction.OfPlayer)
-                    {
-                        continue;
-                    }
-
-                    if (!thing.def.EverStorable(false))
-                    {
-                        continue;
-                    }
-
-                    this.EnsureThingForbidden(thing);
-                }
-            }
-        }
-
-        private void RestoreForbiddenStates(List<IntVec3> cells)
-        {
-            if (cells == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < cells.Count; i++)
-            {
-                IntVec3 cell = cells[i];
-                if (!cell.InBounds(this.map))
-                {
-                    continue;
-                }
-
-                List<Thing> thingList = cell.GetThingList(this.map);
-                for (int j = 0; j < thingList.Count; j++)
-                {
-                    Thing thing = thingList[j];
-                    this.RestoreThingForbidden(thing);
-                }
-            }
-        }
-
-        private void RefreshManagedItems()
-        {
-            if (this.managedCellRefCounts.Count == 0)
-            {
-                return;
-            }
-
-            // TODO deep: Tie managed stock counts into the resource readout when the feature is ready.
-            this.tmpCells.Clear();
-            foreach (KeyValuePair<IntVec3, int> pair in this.managedCellRefCounts)
-            {
-                this.tmpCells.Add(pair.Key);
-            }
-
-            for (int i = 0; i < this.tmpCells.Count; i++)
-            {
-                IntVec3 cell = this.tmpCells[i];
-                if (!cell.InBounds(this.map))
-                {
-                    continue;
-                }
-
-                List<Thing> thingList = cell.GetThingList(this.map);
-                for (int j = 0; j < thingList.Count; j++)
-                {
-                    Thing thing = thingList[j];
-                    if (!thing.Spawned)
-                    {
-                        continue;
-                    }
-
-                    if (thing.Faction != Faction.OfPlayer)
-                    {
-                        continue;
-                    }
-
-                    if (!thing.def.EverStorable(false))
-                    {
-                        continue;
-                    }
-
-                    this.EnsureThingForbidden(thing);
-                }
-            }
-        }
-
-        private void EnsureThingForbidden(Thing thing)
-        {
-            if (thing == null)
-            {
-                return;
-            }
-
-            bool original;
-            if (!this.trackedForbiddenStates.TryGetValue(thing, out original))
-            {
-                original = ForbidUtility.IsForbidden(thing, Faction.OfPlayer);
-                this.trackedForbiddenStates.Add(thing, original);
-            }
-
-            if (!ForbidUtility.IsForbidden(thing, Faction.OfPlayer))
-            {
-                ForbidUtility.SetForbidden(thing, true, false);
-            }
-        }
-
-        private void RestoreThingForbidden(Thing thing)
-        {
-            if (thing == null)
-            {
-                return;
-            }
-
-            bool original;
-            if (!this.trackedForbiddenStates.TryGetValue(thing, out original))
-            {
-                return;
-            }
-
-            if (!thing.Destroyed)
-            {
-                ForbidUtility.SetForbidden(thing, original, false);
-            }
-
-            this.trackedForbiddenStates.Remove(thing);
-        }
-
-        private ManagedBuildingRecord GetOrCreateBuildingRecord(Building_Storage storage)
-        {
-            ManagedBuildingRecord record = this.FindBuildingRecord(storage);
-            if (record != null)
-            {
-                return record;
-            }
-
-            record = new ManagedBuildingRecord(storage);
-            this.buildingRecords.Add(record);
-            return record;
-        }
-
-        private ManagedZoneRecord GetOrCreateZoneRecord(Zone_Stockpile zone)
-        {
-            ManagedZoneRecord record = this.FindZoneRecord(zone);
-            if (record != null)
-            {
-                return record;
-            }
-
-            record = new ManagedZoneRecord(zone);
-            this.zoneRecords.Add(record);
-            return record;
-        }
-
-        private ManagedBuildingRecord FindBuildingRecord(Building_Storage storage)
-        {
-            if (storage == null)
+            if (engine == null || this.stockManager == null)
             {
                 return null;
             }
 
-            for (int i = 0; i < this.buildingRecords.Count; i++)
+            IReadOnlyList<StockRecord> stocks = this.stockManager.Stocks;
+            for (int i = 0; i < stocks.Count; i++)
             {
-                ManagedBuildingRecord record = this.buildingRecords[i];
-                if (record.Storage == storage)
+                StockRecord candidate = stocks[i];
+                if (candidate == null || candidate.StockId == StockConstants.ColonyStockId)
                 {
-                    return record;
+                    continue;
+                }
+
+                if (candidate.Metadata?.OwnerThing == engine)
+                {
+                    return candidate;
                 }
             }
 
             return null;
         }
 
-        private ManagedZoneRecord FindZoneRecord(Zone_Stockpile zone)
+        private void ResolveStockManager()
         {
-            if (zone == null)
+            if (this.stockManager != null)
             {
+                return;
+            }
+
+            this.stockManager = this.map.GetComponent<StockManagerComponent>();
+            if (this.stockManager == null)
+            {
+                this.stockManager = new StockManagerComponent(this.map);
+                this.map.components.Add(this.stockManager);
+                this.stockManager.FinalizeInit();
+            }
+        }
+
+        private void RebuildMappings()
+        {
+            this.engineToStockId.Clear();
+            this.stockIdToEngine.Clear();
+            this.managedParents.Clear();
+
+            if (this.stockManager == null)
+            {
+                return;
+            }
+
+            IReadOnlyList<StockRecord> stocks = this.stockManager.Stocks;
+            for (int i = 0; i < stocks.Count; i++)
+            {
+                StockRecord stock = stocks[i];
+                if (stock == null || stock.StockId == StockConstants.ColonyStockId)
+                {
+                    continue;
+                }
+
+                Building_GravEngine engine = stock.Metadata?.OwnerThing as Building_GravEngine;
+                if (engine == null || engine.Map != this.map)
+                {
+                    continue;
+                }
+
+                this.engineToStockId[engine] = stock.StockId;
+                this.stockIdToEngine[stock.StockId] = engine;
+
+                for (int p = 0; p < stock.Parents.Count; p++)
+                {
+                    ISlotGroupParent parent = stock.Parents[p];
+                    if (parent != null)
+                    {
+                        this.managedParents.Add(parent);
+                    }
+                }
+            }
+        }
+
+        private void RestoreSavedSettings()
+        {
+            this.savedSettings.Clear();
+            if (this.savedSettingsState == null)
+            {
+                this.savedSettingsState = new List<ManagedParentState>();
+                return;
+            }
+
+            for (int i = 0; i < this.savedSettingsState.Count; i++)
+            {
+                ManagedParentState state = this.savedSettingsState[i];
+                ISlotGroupParent parent = state?.ResolveParent();
+                if (parent != null && state.Settings != null)
+                {
+                    this.savedSettings[parent] = state.Settings;
+                }
+            }
+        }
+
+        private class ManagedParentState : IExposable
+        {
+            public Building_Storage Building;
+            public Zone_Stockpile Zone;
+            public StoredStorageSettings Settings;
+
+            public void ExposeData()
+            {
+                Scribe_References.Look(ref this.Building, "building");
+                Scribe_References.Look(ref this.Zone, "zone");
+                Scribe_Deep.Look(ref this.Settings, "settings");
+            }
+
+            public ISlotGroupParent ResolveParent()
+            {
+                if (this.Building != null)
+                {
+                    return this.Building;
+                }
+
+                if (this.Zone != null)
+                {
+                    return this.Zone;
+                }
+
                 return null;
             }
-
-            for (int i = 0; i < this.zoneRecords.Count; i++)
-            {
-                ManagedZoneRecord record = this.zoneRecords[i];
-                if (record.Zone == zone)
-                {
-                    return record;
-                }
-            }
-
-            return null;
-        }
-
-        private void RebuildManagedState()
-        {
-            this.managedCellRefCounts.Clear();
-            this.trackedForbiddenStates.Clear();
-
-            for (int i = this.buildingRecords.Count - 1; i >= 0; i--)
-            {
-                ManagedBuildingRecord record = this.buildingRecords[i];
-                if (record.Storage == null || record.Storage.Map != this.map)
-                {
-                    this.buildingRecords.RemoveAt(i);
-                    continue;
-                }
-
-                if (!record.IsManaged)
-                {
-                    continue;
-                }
-
-                StorageSettings settings = record.Storage.GetStoreSettings();
-                if (settings != null)
-                {
-                    this.ApplyDisallowAll(settings, record.Storage);
-                }
-
-                List<IntVec3> cells = record.Storage.AllSlotCellsList();
-                this.AddManagedCells(cells);
-                this.EnsureCellsForbidden(cells);
-            }
-
-            for (int j = this.zoneRecords.Count - 1; j >= 0; j--)
-            {
-                ManagedZoneRecord record2 = this.zoneRecords[j];
-                if (record2.Zone == null || record2.Zone.Map != this.map)
-                {
-                    this.zoneRecords.RemoveAt(j);
-                    continue;
-                }
-
-                if (!record2.IsManaged)
-                {
-                    continue;
-                }
-
-                StorageSettings settings2 = record2.Zone.GetStoreSettings();
-                if (settings2 != null)
-                {
-                    this.ApplyDisallowAll(settings2, record2.Zone);
-                }
-
-                List<IntVec3> cells2 = record2.Zone.AllSlotCellsList();
-                this.AddManagedCells(cells2);
-                this.EnsureCellsForbidden(cells2);
-            }
-        }
-    }
-
-    public class ManagedBuildingRecord : IExposable
-    {
-        public Building_Storage Storage;
-        public bool IsManaged;
-        public StoredStorageSettings SavedSettings;
-
-        public ManagedBuildingRecord()
-        {
-        }
-
-        public ManagedBuildingRecord(Building_Storage storage)
-        {
-            this.Storage = storage;
-        }
-
-        public void ExposeData()
-        {
-            Scribe_References.Look(ref this.Storage, "storage");
-            Scribe_Values.Look(ref this.IsManaged, "isManaged", false);
-            Scribe_Deep.Look(ref this.SavedSettings, "savedSettings");
-        }
-    }
-
-    public class ManagedZoneRecord : IExposable
-    {
-        public Zone_Stockpile Zone;
-        public bool IsManaged;
-        public StoredStorageSettings SavedSettings;
-
-        public ManagedZoneRecord()
-        {
-        }
-
-        public ManagedZoneRecord(Zone_Stockpile zone)
-        {
-            this.Zone = zone;
-        }
-
-        public void ExposeData()
-        {
-            Scribe_References.Look(ref this.Zone, "zone");
-            Scribe_Values.Look(ref this.IsManaged, "isManaged", false);
-            Scribe_Deep.Look(ref this.SavedSettings, "savedSettings");
-        }
-    }
-
-    public class StoredStorageSettings : IExposable
-    {
-        public StoragePriority Priority;
-        public ThingFilter Filter = new ThingFilter();
-
-        public void Capture(StorageSettings settings)
-        {
-            if (settings == null)
-            {
-                return;
-            }
-
-            this.Priority = settings.Priority;
-            if (this.Filter == null)
-            {
-                this.Filter = new ThingFilter();
-            }
-
-            this.Filter.CopyAllowancesFrom(settings.filter);
-        }
-
-        public void ApplyTo(StorageSettings settings)
-        {
-            if (settings == null)
-            {
-                return;
-            }
-
-            settings.Priority = this.Priority;
-            if (this.Filter != null)
-            {
-                settings.filter.CopyAllowancesFrom(this.Filter);
-            }
-        }
-
-        public void ExposeData()
-        {
-            Scribe_Values.Look(ref this.Priority, "priority", StoragePriority.Unstored);
-            Scribe_Deep.Look(ref this.Filter, "filter");
         }
     }
 }

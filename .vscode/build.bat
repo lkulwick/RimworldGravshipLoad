@@ -1,26 +1,50 @@
 @echo off
 setlocal
 
-set "PROJECT=%~dp0mod.csproj"
+set "PROJECT=.vscode\mod.csproj"
+set "MOD_NAME=Gravload"
 
-for %%I in ("%~dp0..") do set "TEMPLATE_ROOT=%%~fI"
-set "MOD_ROOT=%TEMPLATE_ROOT%\placeholder"
-set "OUTPUT_DIR=%MOD_ROOT%\1.6\Assemblies"
+for %%I in ("%~dp0..") do set "REPO_ROOT=%%~fI"
+set "MOD_DIR=%REPO_ROOT%\gravload"
+set "OUTPUT_DIR=%MOD_DIR%\1.6\Assemblies"
+for %%I in ("C:\Program Files (x86)\Steam\steamapps\common\RimWorld\Mods") do set "RIMWORLD_MODS_DIR=%%~fI"
+set "TARGET_DIR=%RIMWORLD_MODS_DIR%\%MOD_NAME%"
+set "LOCK_PATH=%TARGET_DIR%\.gravload_lock"
 
-if not exist "%MOD_ROOT%\1.6" (
-    mkdir "%MOD_ROOT%\1.6"
+if not exist "%MOD_DIR%\1.6" (
+    mkdir "%MOD_DIR%\1.6"
 )
 
 if not exist "%OUTPUT_DIR%" (
     mkdir "%OUTPUT_DIR%"
 )
 
-echo Building placeholder mod assembly into %OUTPUT_DIR%
+del /q "%OUTPUT_DIR%\*" >nul 2>&1
+
 dotnet build "%PROJECT%" -c Release
 if errorlevel 1 (
     exit /b %errorlevel%
 )
 
-echo.
-echo Build complete. Sync this template with a real RimWorld mod folder when ready.
+if not exist "%RIMWORLD_MODS_DIR%" goto :mods_missing
+
+if exist "%LOCK_PATH%" goto :lock_found
+
+robocopy "%MOD_DIR%" "%TARGET_DIR%" /MIR /NFL /NDL /NJH /NJS /NP >nul
+set "RC=%ERRORLEVEL%"
+if %RC% GEQ 8 (
+    echo Robocopy failed with exit code %RC%.
+    exit /b %RC%
+)
+
+echo Copied mod contents to %TARGET_DIR%
 exit /b 0
+
+:mods_missing
+echo RimWorld Mods directory not found: %RIMWORLD_MODS_DIR%
+exit /b 1
+
+:lock_found
+echo RimWorld mod folder appears in use (lock file found: %LOCK_PATH%).
+echo Please exit RimWorld and remove the lock file if the game is closed.
+exit /b 2
