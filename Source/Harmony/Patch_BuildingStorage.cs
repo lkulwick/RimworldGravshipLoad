@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using HarmonyLib;
 using RimWorld;
 using UnityEngine;
@@ -93,6 +93,21 @@ namespace Deep_Gravload
             }
 
             tracker.OnStoredThingLost(newItem);
+        }
+    }
+
+    [HarmonyPatch(typeof(Building_Storage), nameof(Building_Storage.SpawnSetup))]
+    public static class Patch_Building_Storage_SpawnSetup
+    {
+        public static void Postfix(Building_Storage __instance)
+        {
+            if (__instance == null)
+            {
+                return;
+            }
+
+            GravloadMapComponent tracker = ManagedStorageUtility.GetTracker(__instance.Map);
+            tracker?.NotifyManagedBuildingSpawned(__instance);
         }
     }
 

@@ -14,6 +14,8 @@ namespace Deep_Gravload
         private readonly HashSet<ISlotGroupParent> managedParents = new HashSet<ISlotGroupParent>();
         private readonly Dictionary<ISlotGroupParent, StoredStorageSettings> savedSettings = new Dictionary<ISlotGroupParent, StoredStorageSettings>();
         private List<ManagedParentState> savedSettingsState = new List<ManagedParentState>();
+        private readonly HashSet<Building_Storage> pendingManagedBuildings = new HashSet<Building_Storage>();
+        private readonly List<Building_Storage> tmpPendingBuildings = new List<Building_Storage>();
 
         public GravloadMapComponent(Map map) : base(map)
         {
@@ -24,36 +26,7 @@ namespace Deep_Gravload
             base.ExposeData();
             if (Scribe.mode == LoadSaveMode.Saving)
             {
-                this.savedSettingsState.Clear();
-                foreach (KeyValuePair<ISlotGroupParent, StoredStorageSettings> pair in this.savedSettings)
-                {
-                    ISlotGroupParent parent = pair.Key;
-                    StoredStorageSettings settings = pair.Value;
-                    if (parent == null || settings == null)
-                    {
-                        continue;
-                    }
-
-                    ManagedParentState state = new ManagedParentState
-                    {
-                        Settings = settings
-                    };
-
-                    if (parent is Building_Storage building)
-                    {
-                        state.Building = building;
-                    }
-                    else if (parent is Zone_Stockpile zone)
-                    {
-                        state.Zone = zone;
-                    }
-                    else
-                    {
-                        continue;
-                    }
-
-                    this.savedSettingsState.Add(state);
-                }
+                this.SerializeManagedParents();
             }
 
             Scribe_Collections.Look(ref this.savedSettingsState, "managedParentSettings", LookMode.Deep);
@@ -72,6 +45,27 @@ namespace Deep_Gravload
             this.ResolveStockManager();
             this.RestoreSavedSettings();
             this.RebuildMappings();
+        }
+
+        public override void MapComponentTick()
+        {
+            base.MapComponentTick();
+            this.ProcessPendingManagedBuildings();
+        }
+
+        public void NotifyManagedBuildingSpawned(Building_Storage storage)
+        {
+            if (storage == null || storage.Map != this.map)
+            {
+                return;
+            }
+
+            if (!this.pendingManagedBuildings.Contains(storage))
+            {
+                return;
+            }
+
+            this.ProcessPendingManagedBuildings();
         }
 
         public bool IsManaged(Building_Storage storage)
@@ -111,6 +105,7 @@ namespace Deep_Gravload
                 return;
             }
 
+            this.ResolveStockManager();
             this.stockManager?.NotifyParentCellsChanged(zone);
         }
 
@@ -126,24 +121,28 @@ namespace Deep_Gravload
                 return;
             }
 
-            this.managedParents.Remove(parent);
-            this.savedSettings.Remove(parent);
+            this.ResolveStockManager();
             this.stockManager?.UnregisterParent(parent);
+            this.managedParents.Remove(parent);
+
+            if (parent is Building_Storage destroyedBuilding)
+            {
+                this.pendingManagedBuildings.Remove(destroyedBuilding);
+            }
+
+            this.savedSettings.Remove(parent);
         }
 
         public void OnStoredThingReceived(ISlotGroupParent parent, Thing thing)
         {
-            // No additional handling required; pawn hauling to managed stock is governed by SeparateStocks policies.
         }
 
         public void OnStoredThingLost(Thing thing)
         {
-            // No-op; state is tracked by stock manager and transfer operations.
         }
 
         public void NotifyItemPlacedInManagedCell(Thing thing)
         {
-            // No-op; forbidding is no longer required with SeparateStocks gating.
         }
 
         public bool IsThingInManagedCell(Thing thing)
@@ -153,12 +152,14 @@ namespace Deep_Gravload
                 return false;
             }
 
+            this.ResolveStockManager();
             int stockId = this.stockManager?.GetStockOfThing(thing) ?? StockConstants.ColonyStockId;
             return stockId != StockConstants.ColonyStockId;
         }
 
         public bool IsManagedCell(IntVec3 cell)
         {
+            this.ResolveStockManager();
             int stockId = this.stockManager?.GetStockOfCell(cell) ?? StockConstants.ColonyStockId;
             return stockId != StockConstants.ColonyStockId;
         }
@@ -171,6 +172,7 @@ namespace Deep_Gravload
                 return false;
             }
 
+            this.ResolveStockManager();
             int stockId = this.stockManager?.GetStockOfThing(thing) ?? StockConstants.ColonyStockId;
             if (stockId == StockConstants.ColonyStockId)
             {
@@ -189,13 +191,12 @@ namespace Deep_Gravload
                 return false;
             }
 
-            int stockId;
-            if (!this.TryGetStockIdForEngine(engine, out stockId))
+            if (!this.TryGetStockIdForEngine(engine, out int stockId))
             {
                 return false;
             }
 
-            return this.stockManager.HasActiveOperationsForStock(stockId);
+            return this.stockManager != null && this.stockManager.HasActiveOperationsForStock(stockId);
         }
 
         public IEnumerable<Thing> GetPendingThings()
@@ -258,13 +259,7 @@ namespace Deep_Gravload
                 return false;
             }
 
-            if (this.stockManager.HasActiveOperationsForStock(stockId))
-            {
-                failureReason = "DeepGravload_Error_LoadInProgress".Translate();
-                return false;
-            }
-
-            if (this.stockManager.TryStartTransferOperation(stockId, loadSelections, unloadSelections, out failureReason))
+            if (this.stockManager != null && this.stockManager.TryStartTransferOperation(stockId, loadSelections, unloadSelections, out failureReason))
             {
                 return true;
             }
@@ -284,13 +279,13 @@ namespace Deep_Gravload
                 return false;
             }
 
-            StockRecord record;
-            if (!this.stockManager.TryGetStock(stockId, out record) || record == null)
+            StockRecord stock;
+            if (!this.stockManager.TryGetStock(stockId, out stock) || stock == null)
             {
                 return false;
             }
 
-            return record.CachedCells.Count > 0;
+            return stock.CachedCells.Count > 0;
         }
 
         public void CancelOperationsForEngine(Building_GravEngine engine)
@@ -325,13 +320,7 @@ namespace Deep_Gravload
 
         private void EnableParent(ISlotGroupParent parent)
         {
-            if (parent == null)
-            {
-                return;
-            }
-
-            Map parentMap = parent.Map;
-            if (parentMap != this.map)
+            if (parent == null || parent.Map != this.map)
             {
                 return;
             }
@@ -359,6 +348,11 @@ namespace Deep_Gravload
 
             this.stockManager.RegisterParent(stockId, parent);
             this.managedParents.Add(parent);
+
+            if (parent is Building_Storage building)
+            {
+                this.pendingManagedBuildings.Remove(building);
+            }
         }
 
         private void DisableParent(ISlotGroupParent parent)
@@ -368,8 +362,13 @@ namespace Deep_Gravload
                 return;
             }
 
-            this.stockManager.UnregisterParent(parent);
+            this.stockManager?.UnregisterParent(parent);
             this.managedParents.Remove(parent);
+
+            if (parent is Building_Storage building)
+            {
+                this.pendingManagedBuildings.Remove(building);
+            }
 
             StorageSettings settings = parent.GetStoreSettings();
             if (settings != null && this.savedSettings.TryGetValue(parent, out StoredStorageSettings snapshot) && snapshot != null)
@@ -381,6 +380,188 @@ namespace Deep_Gravload
             this.savedSettings.Remove(parent);
         }
 
+        private void SerializeManagedParents()
+        {
+            this.savedSettingsState.Clear();
+
+            List<ISlotGroupParent> parents = new List<ISlotGroupParent>(this.managedParents);
+            foreach (Building_Storage building in this.pendingManagedBuildings)
+            {
+                if (building != null && !parents.Contains(building))
+                {
+                    parents.Add(building);
+                }
+            }
+
+            for (int i = 0; i < parents.Count; i++)
+            {
+                ISlotGroupParent parent = parents[i];
+                if (parent == null)
+                {
+                    continue;
+                }
+
+                ManagedParentState state = new ManagedParentState();
+                if (parent is Building_Storage buildingParent)
+                {
+                    state.Building = buildingParent;
+                }
+                else if (parent is Zone_Stockpile zoneParent)
+                {
+                    state.Zone = zoneParent;
+                }
+                else
+                {
+                    continue;
+                }
+
+                StoredStorageSettings snapshot;
+                if (this.savedSettings.TryGetValue(parent, out snapshot))
+                {
+                    state.Settings = snapshot;
+                }
+
+                this.savedSettingsState.Add(state);
+            }
+        }
+
+        private void RestoreSavedSettings()
+        {
+            this.savedSettings.Clear();
+            if (this.savedSettingsState == null)
+            {
+                this.savedSettingsState = new List<ManagedParentState>();
+            }
+
+            for (int i = 0; i < this.savedSettingsState.Count; i++)
+            {
+                ManagedParentState state = this.savedSettingsState[i];
+                ISlotGroupParent parent = state?.ResolveParent();
+                if (parent != null && state.Settings != null)
+                {
+                    this.savedSettings[parent] = state.Settings;
+                }
+            }
+        }
+
+        private void ResolveStockManager()
+        {
+            if (this.stockManager != null)
+            {
+                return;
+            }
+
+            this.stockManager = this.map.GetComponent<StockManagerComponent>();
+            if (this.stockManager == null)
+            {
+                this.stockManager = new StockManagerComponent(this.map);
+                this.map.components.Add(this.stockManager);
+                this.stockManager.FinalizeInit();
+            }
+        }
+
+        private void RebuildMappings()
+        {
+            this.engineToStockId.Clear();
+            this.stockIdToEngine.Clear();
+            this.managedParents.Clear();
+            this.pendingManagedBuildings.Clear();
+
+            if (this.stockManager == null)
+            {
+                return;
+            }
+
+            IReadOnlyList<StockRecord> stocks = this.stockManager.Stocks;
+            for (int i = 0; i < stocks.Count; i++)
+            {
+                StockRecord stock = stocks[i];
+                if (stock == null || stock.StockId == StockConstants.ColonyStockId)
+                {
+                    continue;
+                }
+
+                Building_GravEngine engine = stock.Metadata?.OwnerThing as Building_GravEngine;
+                if (engine == null || engine.Map != this.map)
+                {
+                    continue;
+                }
+
+                this.engineToStockId[engine] = stock.StockId;
+                this.stockIdToEngine[stock.StockId] = engine;
+
+                for (int p = 0; p < stock.Parents.Count; p++)
+                {
+                    ISlotGroupParent parent = stock.Parents[p];
+                    if (parent == null)
+                    {
+                        continue;
+                    }
+
+                    if (parent.Map != this.map)
+                    {
+                        if (parent is Building_Storage pendingBuilding)
+                        {
+                            this.pendingManagedBuildings.Add(pendingBuilding);
+                        }
+
+                        continue;
+                    }
+
+                    this.managedParents.Add(parent);
+                }
+            }
+
+            this.ProcessPendingManagedBuildings();
+        }
+
+        private void ProcessPendingManagedBuildings()
+        {
+            if (this.pendingManagedBuildings.Count == 0 || this.stockManager == null)
+            {
+                return;
+            }
+
+            this.tmpPendingBuildings.Clear();
+
+            foreach (Building_Storage building in this.pendingManagedBuildings)
+            {
+                if (building == null || building.Destroyed || building.Map != this.map)
+                {
+                    this.tmpPendingBuildings.Add(building);
+                    continue;
+                }
+
+                if (!building.Spawned)
+                {
+                    continue;
+                }
+
+                Building_GravEngine engine;
+                if (!ManagedStorageUtility.TryFindEngineForParent(building, this.map, out engine))
+                {
+                    continue;
+                }
+
+                if (!this.TryEnsureStockForEngine(engine, out int stockId))
+                {
+                    continue;
+                }
+
+                this.stockManager.RegisterParent(stockId, building);
+                this.managedParents.Add(building);
+                this.tmpPendingBuildings.Add(building);
+            }
+
+            for (int i = 0; i < this.tmpPendingBuildings.Count; i++)
+            {
+                Building_Storage building = this.tmpPendingBuildings[i];
+                this.pendingManagedBuildings.Remove(building);
+            }
+
+            this.tmpPendingBuildings.Clear();
+        }
+
         private bool TryEnsureStockForEngine(Building_GravEngine engine, out int stockId)
         {
             stockId = StockConstants.ColonyStockId;
@@ -389,7 +570,7 @@ namespace Deep_Gravload
                 return false;
             }
 
-            if (this.TryGetStockIdForEngine(engine, out stockId))
+            if (this.engineToStockId.TryGetValue(engine, out stockId))
             {
                 return true;
             }
@@ -409,20 +590,19 @@ namespace Deep_Gravload
                     Label = engine.LabelCap
                 };
                 stockId = this.stockManager.CreateStock(metadata);
+                if (this.stockManager.TryGetStock(stockId, out StockRecord created) && created != null)
+                {
+                    created.Metadata.OwnerThing = engine;
+                }
             }
             else
             {
                 stockId = existing.StockId;
+                existing.Metadata.OwnerThing = engine;
             }
 
             this.engineToStockId[engine] = stockId;
             this.stockIdToEngine[stockId] = engine;
-
-            if (existing == null && this.stockManager.TryGetStock(stockId, out StockRecord created))
-            {
-                created.Metadata.OwnerThing = engine;
-            }
-
             return true;
         }
 
@@ -439,13 +619,13 @@ namespace Deep_Gravload
                 return true;
             }
 
-            StockRecord record = this.FindStockForEngine(engine);
-            if (record == null)
+            StockRecord stock = this.FindStockForEngine(engine);
+            if (stock == null)
             {
                 return false;
             }
 
-            stockId = record.StockId;
+            stockId = stock.StockId;
             this.engineToStockId[engine] = stockId;
             this.stockIdToEngine[stockId] = engine;
             return true;
@@ -474,82 +654,6 @@ namespace Deep_Gravload
             }
 
             return null;
-        }
-
-        private void ResolveStockManager()
-        {
-            if (this.stockManager != null)
-            {
-                return;
-            }
-
-            this.stockManager = this.map.GetComponent<StockManagerComponent>();
-            if (this.stockManager == null)
-            {
-                this.stockManager = new StockManagerComponent(this.map);
-                this.map.components.Add(this.stockManager);
-                this.stockManager.FinalizeInit();
-            }
-        }
-
-        private void RebuildMappings()
-        {
-            this.engineToStockId.Clear();
-            this.stockIdToEngine.Clear();
-            this.managedParents.Clear();
-
-            if (this.stockManager == null)
-            {
-                return;
-            }
-
-            IReadOnlyList<StockRecord> stocks = this.stockManager.Stocks;
-            for (int i = 0; i < stocks.Count; i++)
-            {
-                StockRecord stock = stocks[i];
-                if (stock == null || stock.StockId == StockConstants.ColonyStockId)
-                {
-                    continue;
-                }
-
-                Building_GravEngine engine = stock.Metadata?.OwnerThing as Building_GravEngine;
-                if (engine == null || engine.Map != this.map)
-                {
-                    continue;
-                }
-
-                this.engineToStockId[engine] = stock.StockId;
-                this.stockIdToEngine[stock.StockId] = engine;
-
-                for (int p = 0; p < stock.Parents.Count; p++)
-                {
-                    ISlotGroupParent parent = stock.Parents[p];
-                    if (parent != null)
-                    {
-                        this.managedParents.Add(parent);
-                    }
-                }
-            }
-        }
-
-        private void RestoreSavedSettings()
-        {
-            this.savedSettings.Clear();
-            if (this.savedSettingsState == null)
-            {
-                this.savedSettingsState = new List<ManagedParentState>();
-                return;
-            }
-
-            for (int i = 0; i < this.savedSettingsState.Count; i++)
-            {
-                ManagedParentState state = this.savedSettingsState[i];
-                ISlotGroupParent parent = state?.ResolveParent();
-                if (parent != null && state.Settings != null)
-                {
-                    this.savedSettings[parent] = state.Settings;
-                }
-            }
         }
 
         private class ManagedParentState : IExposable

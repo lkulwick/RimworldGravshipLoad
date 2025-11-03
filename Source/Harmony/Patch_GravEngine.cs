@@ -47,22 +47,12 @@ namespace Deep_Gravload
                     return;
                 }
 
-                if (tracker.HasActiveOperationsForEngine(engine))
-                {
-                    Messages.Message("DeepGravload_CommandLoadCargoDisabled".Translate(), MessageTypeDefOf.RejectInput, false);
-                    return;
-                }
-
                 Find.WindowStack.Add(new Dialog_GravloadCargo(engine));
             };
 
             if (!tracker.HasManagedCellsForEngine(engine))
             {
                 command.Disable("DeepGravload_CommandLoadCargoNoStorage".Translate());
-            }
-            else if (tracker.HasActiveOperationsForEngine(engine))
-            {
-                command.Disable("DeepGravload_CommandLoadCargoDisabled".Translate());
             }
 
             return command;

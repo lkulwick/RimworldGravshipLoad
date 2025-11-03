@@ -107,9 +107,9 @@ namespace SeparateStocks
                 return;
             }
 
-            if (!stock.Parents.Contains(parent))
+            if (!stock.ContainsParent(parent))
             {
-                stock.Parents.Add(parent);
+                stock.AddParent(parent);
             }
 
             this.parentToStock[parent] = stock.StockId;
@@ -138,9 +138,11 @@ namespace SeparateStocks
                 return;
             }
 
-            stock.Parents.Remove(parent);
-            stock.NeedsRefresh = true;
-            this.cellsDirty = true;
+            if (stock.RemoveParent(parent))
+            {
+                stock.NeedsRefresh = true;
+                this.cellsDirty = true;
+            }
         }
 
         public void NotifyParentCellsChanged(ISlotGroupParent parent)
@@ -243,12 +245,17 @@ namespace SeparateStocks
                     continue;
                 }
 
+                stock.RebuildParentCache();
                 for (int p = stock.Parents.Count - 1; p >= 0; p--)
                 {
                     ISlotGroupParent parent = stock.Parents[p];
-                    if (parent == null || parent.Map != this.map)
+                    if (parent == null)
                     {
-                        stock.Parents.RemoveAt(p);
+                        continue;
+                    }
+
+                    if (parent.Map != this.map)
+                    {
                         continue;
                     }
 
@@ -284,6 +291,8 @@ namespace SeparateStocks
                 return;
             }
 
+            stock.RebuildParentCache();
+
             if (stock.CachedCells.Count > 0)
             {
                 for (int c = 0; c < stock.CachedCells.Count; c++)
@@ -300,6 +309,7 @@ namespace SeparateStocks
                 ISlotGroupParent parent = stock.Parents[i];
                 if (parent == null || parent.Map != this.map)
                 {
+                    stock.RemoveParent(parent);
                     continue;
                 }
 
@@ -377,12 +387,6 @@ namespace SeparateStocks
                 if (destination.CachedCells.Count == 0)
                 {
                     failureReason = "DeepGravload_Error_NoManagedCells".Translate();
-                    return false;
-                }
-
-                if (this.HasActiveOperationsForStock(destinationStockId))
-                {
-                    failureReason = "DeepGravload_Error_LoadInProgress".Translate();
                     return false;
                 }
             }
