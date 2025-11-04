@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using RimWorld;
 using Verse;
 using Verse.AI;
@@ -10,10 +11,8 @@ namespace SeparateStocks
         private List<StockRecord> stocks = new List<StockRecord>();
         private List<StockTransferOperation> activeOperations = new List<StockTransferOperation>();
         private readonly Dictionary<Pawn, StockJobTicket> activeTickets = new Dictionary<Pawn, StockJobTicket>();
-        private readonly Dictionary<IntVec3, StockCellInfo> cellLookup = new Dictionary<IntVec3, StockCellInfo>();
         private readonly Dictionary<ISlotGroupParent, int> parentToStock = new Dictionary<ISlotGroupParent, int>();
         private readonly List<Pawn> tmpPawns = new List<Pawn>();
-        private readonly List<IntVec3> tmpCells = new List<IntVec3>();
 
         private int nextStockId = 1;
         private int nextOperationId = 1;
@@ -170,10 +169,20 @@ namespace SeparateStocks
 
         public int GetStockOfCell(IntVec3 cell)
         {
-            StockCellInfo info;
-            if (this.cellLookup.TryGetValue(cell, out info) && info.Stock != null)
+            if (!cell.IsValid || this.map?.haulDestinationManager == null)
             {
-                return info.Stock.StockId;
+                return StockConstants.ColonyStockId;
+            }
+
+            SlotGroup slotGroup = this.map.haulDestinationManager.SlotGroupAt(cell);
+            if (slotGroup == null)
+            {
+                return StockConstants.ColonyStockId;
+            }
+
+            if (slotGroup.parent != null && this.parentToStock.TryGetValue(slotGroup.parent, out int stockId))
+            {
+                return stockId;
             }
 
             return StockConstants.ColonyStockId;
@@ -235,7 +244,6 @@ namespace SeparateStocks
         private void RebuildCaches()
         {
             this.parentToStock.Clear();
-            this.cellLookup.Clear();
 
             for (int i = 0; i < this.stocks.Count; i++)
             {
@@ -270,8 +278,6 @@ namespace SeparateStocks
 
         private void RefreshAllCells()
         {
-            this.cellLookup.Clear();
-
             for (int i = 0; i < this.stocks.Count; i++)
             {
                 StockRecord stock = this.stocks[i];
@@ -292,19 +298,11 @@ namespace SeparateStocks
             }
 
             stock.RebuildParentCache();
-
-            if (stock.CachedCells.Count > 0)
-            {
-                for (int c = 0; c < stock.CachedCells.Count; c++)
-                {
-                    IntVec3 existing = stock.CachedCells[c];
-                    this.cellLookup.Remove(existing);
-                }
-            }
-
             stock.CachedCells.Clear();
 
-            for (int i = 0; i < stock.Parents.Count; i++)
+            HashSet<IntVec3> uniqueCells = new HashSet<IntVec3>();
+
+            for (int i = stock.Parents.Count - 1; i >= 0; i--)
             {
                 ISlotGroupParent parent = stock.Parents[i];
                 if (parent == null || parent.Map != this.map)
@@ -313,13 +311,14 @@ namespace SeparateStocks
                     continue;
                 }
 
-                this.tmpCells.Clear();
                 List<IntVec3> slotCells = parent.AllSlotCellsList();
                 for (int j = 0; j < slotCells.Count; j++)
                 {
                     IntVec3 cell = slotCells[j];
-                    stock.CachedCells.Add(cell);
-                    this.cellLookup[cell] = new StockCellInfo(cell, stock);
+                    if (uniqueCells.Add(cell))
+                    {
+                        stock.CachedCells.Add(cell);
+                    }
                 }
             }
 
@@ -371,6 +370,8 @@ namespace SeparateStocks
         public bool TryStartTransferOperation(int destinationStockId, List<ThingCount> loads, List<ThingCount> unloads, out string failureReason)
         {
             failureReason = null;
+
+            this.PruneOperations();
 
             bool hasLoads = loads != null && loads.Count > 0;
             bool hasUnloads = unloads != null && unloads.Count > 0;
@@ -514,13 +515,29 @@ namespace SeparateStocks
 
         public bool TryAssignHaulJob(Pawn pawn, Thing thing, bool forced, out StockJobTicket ticket)
         {
-            return this.TryPrepareJob(pawn, thing, forced, reserve: true, out ticket);
+            SeparateStockContext.PushHaulAllowance();
+            try
+            {
+                return this.TryPrepareJob(pawn, thing, forced, reserve: true, out ticket);
+            }
+            finally
+            {
+                SeparateStockContext.PopHaulAllowance();
+            }
         }
 
         public bool CanHandleThing(Pawn pawn, Thing thing, bool forced)
         {
-            StockJobTicket ticket;
-            return this.TryPrepareJob(pawn, thing, forced, reserve: false, out ticket);
+            SeparateStockContext.PushHaulAllowance();
+            try
+            {
+                StockJobTicket ticket;
+                return this.TryPrepareJob(pawn, thing, forced, reserve: false, out ticket);
+            }
+            finally
+            {
+                SeparateStockContext.PopHaulAllowance();
+            }
         }
 
         public StockJobTicket GetTicket(Pawn pawn)
@@ -567,6 +584,12 @@ namespace SeparateStocks
                 {
                     request.LoadedCount = request.TotalCount;
                 }
+            }
+
+            operation.PruneInvalidTransfers();
+            if (operation.Completed)
+            {
+                this.activeOperations.Remove(operation);
             }
         }
 
@@ -683,7 +706,18 @@ namespace SeparateStocks
             {
                 StoragePriority currentPriority = StoreUtility.CurrentStoragePriorityOf(thing);
                 IntVec3 storeCell;
-                if (!StoreUtility.TryFindBestBetterStoreCellFor(thing, pawn, this.map, currentPriority, pawn.Faction, out storeCell))
+                SeparateStockContext.PushCrossStockSearch();
+                bool found;
+                try
+                {
+                    found = StoreUtility.TryFindBestBetterStoreCellFor(thing, pawn, this.map, currentPriority, pawn.Faction, out storeCell);
+                }
+                finally
+                {
+                    SeparateStockContext.PopCrossStockSearch();
+                }
+
+                if (!found)
                 {
                     return false;
                 }
@@ -752,116 +786,7 @@ namespace SeparateStocks
                 return false;
             }
 
-            int stockId = operation.DestinationStockId;
-            StockRecord stock;
-            if (!this.TryEnsureStockReady(stockId, out stock) || stock == null)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < stock.CachedCells.Count; i++)
-            {
-                IntVec3 slot = stock.CachedCells[i];
-                if (!slot.InBounds(this.map))
-                {
-                    continue;
-                }
-
-                int reserved = operation.GetReserved(slot);
-                int capacity = this.GetCellCapacity(slot, thing, reserved);
-                if (capacity <= 0)
-                {
-                    continue;
-                }
-
-                cell = slot;
-                count = capacity;
-                if (count > desiredCount)
-                {
-                    count = desiredCount;
-                }
-
-                return true;
-            }
-
-            return false;
-        }
-
-        private int GetCellCapacity(IntVec3 cell, Thing thing, int reserved)
-        {
-            if (!cell.InBounds(this.map))
-            {
-                return 0;
-            }
-
-            Building edifice = cell.GetEdifice(this.map);
-            if (edifice != null && !(edifice is Building_Storage))
-            {
-                return 0;
-            }
-
-            List<Thing> things = cell.GetThingList(this.map);
-            for (int i = 0; i < things.Count; i++)
-            {
-                Thing blocker = things[i];
-                if (blocker == thing)
-                {
-                    continue;
-                }
-
-                if (blocker.def.EverStorable(false))
-                {
-                    continue;
-                }
-
-                if (blocker is Blueprint || blocker is Frame)
-                {
-                    return 0;
-                }
-            }
-
-            Thing existing = null;
-            for (int j = 0; j < things.Count; j++)
-            {
-                Thing item = things[j];
-                if (!item.def.EverStorable(false))
-                {
-                    continue;
-                }
-
-                existing = item;
-                break;
-            }
-
-            int stackLimit = thing.def.stackLimit;
-            if (stackLimit <= 0)
-            {
-                stackLimit = 1;
-            }
-
-            if (existing != null)
-            {
-                if (!existing.CanStackWith(thing))
-                {
-                    return 0;
-                }
-
-                int available = existing.def.stackLimit - existing.stackCount - reserved;
-                if (available < 0)
-                {
-                    available = 0;
-                }
-
-                return available;
-            }
-
-            int emptyCapacity = stackLimit - reserved;
-            if (emptyCapacity < 0)
-            {
-                emptyCapacity = 0;
-            }
-
-            return emptyCapacity;
+            return this.TryFindStockCellWithCapacity(operation.DestinationStockId, thing, desiredCount, operation, null, out cell, out count);
         }
 
         private bool ValidateCapacity(int stockId, List<StockTransferRequest> requests)
@@ -886,7 +811,7 @@ namespace SeparateStocks
                 {
                     IntVec3 cell;
                     int count;
-                    if (!this.TryFindCapacitySlot(stockId, request.SourceThing, remaining, simulated, out cell, out count))
+                    if (!this.TryFindStockCellWithCapacity(stockId, request.SourceThing, remaining, null, simulated, out cell, out count))
                     {
                         return false;
                     }
@@ -913,7 +838,7 @@ namespace SeparateStocks
             return true;
         }
 
-        private bool TryFindCapacitySlot(int stockId, Thing thing, int desiredCount, Dictionary<IntVec3, int> simulatedReservations, out IntVec3 cell, out int count)
+        private bool TryFindStockCellWithCapacity(int stockId, Thing thing, int desiredCount, StockTransferOperation operation, Dictionary<IntVec3, int> simulatedReservations, out IntVec3 cell, out int count)
         {
             cell = IntVec3.Invalid;
             count = 0;
@@ -932,22 +857,36 @@ namespace SeparateStocks
                     continue;
                 }
 
-                int simulated;
-                simulatedReservations.TryGetValue(slot, out simulated);
+                if (!StoreUtility.IsGoodStoreCell(slot, this.map, thing, null, Faction.OfPlayer))
+                {
+                    continue;
+                }
 
-                int capacity = this.GetCellCapacity(slot, thing, simulated);
+                int capacity = slot.GetItemStackSpaceLeftFor(this.map, thing.def);
+                if (capacity <= 0)
+                {
+                    continue;
+                }
+
+                int reserved = 0;
+                if (operation != null)
+                {
+                    reserved += operation.GetReserved(slot);
+                }
+
+                if (simulatedReservations != null && simulatedReservations.TryGetValue(slot, out int simulated))
+                {
+                    reserved += simulated;
+                }
+
+                capacity -= reserved;
                 if (capacity <= 0)
                 {
                     continue;
                 }
 
                 cell = slot;
-                count = capacity;
-                if (count > desiredCount)
-                {
-                    count = desiredCount;
-                }
-
+                count = Math.Min(capacity, desiredCount);
                 return true;
             }
 

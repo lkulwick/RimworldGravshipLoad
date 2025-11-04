@@ -100,73 +100,31 @@ namespace Deep_Gravload
 
             yield return Toils_Goto.GotoCell(CellInd, PathEndMode.Touch);
 
-            Toil deposit = new Toil();
-            deposit.initAction = delegate
+            Toil place = Toils_Haul.PlaceHauledThingInCell(CellInd, null, storageMode: true);
+            yield return place;
+
+            Toil finalize = new Toil();
+            finalize.initAction = delegate
             {
-                Pawn actor = deposit.actor;
+                Pawn actor = finalize.actor;
                 GravloadMapComponent tracker = ManagedStorageUtility.GetTracker(actor.Map);
-                StockJobTicket ticket = tracker != null ? tracker.GetTicket(actor) : null;
-                if (tracker == null || ticket == null)
-                {
-                    actor.jobs.curDriver.EndJobWith(JobCondition.Incompletable);
-                    return;
-                }
-
-                Thing carried = actor.carryTracker.CarriedThing;
-                if (carried == null)
-                {
-                    tracker.ReleaseTicket(actor, false, 0);
-                    actor.jobs.curDriver.EndJobWith(JobCondition.Incompletable);
-                    return;
-                }
-
-                int desired = this.job.count;
-                if (desired <= 0 || desired > carried.stackCount)
-                {
-                    desired = carried.stackCount;
-                }
-
-                Thing toPlace = carried;
-                if (carried.stackCount > desired)
-                {
-                    toPlace = carried.SplitOff(desired);
-                }
-
-                IntVec3 cell = this.job.GetTarget(CellInd).Cell;
-                if (!GenPlace.TryPlaceThing(toPlace, cell, actor.Map, ThingPlaceMode.Direct, out Thing placed))
-                {
-                    if (toPlace != carried)
-                    {
-                        carried.TryAbsorbStack(toPlace, false);
-                    }
-
-                    tracker.ReleaseTicket(actor, false, 0);
-                    actor.jobs.curDriver.EndJobWith(JobCondition.Incompletable);
-                    return;
-                }
+                IntVec3 cell = actor.CurJob.GetTarget(CellInd).Cell;
 
                 if (tracker != null)
                 {
-                    Thing managedThing = placed ?? toPlace;
-                    tracker.NotifyItemPlacedInManagedCell(managedThing);
+                    List<Thing> things = cell.GetThingList(actor.Map);
+                    for (int i = 0; i < things.Count; i++)
+                    {
+                        tracker.NotifyItemPlacedInManagedCell(things[i]);
+                    }
+
+                    tracker.ReleaseTicket(actor, true, this.job.count);
                 }
 
-                Thing leftover = actor.carryTracker.CarriedThing;
-                if (leftover != null && leftover.stackCount > 0)
-                {
-                    GenPlace.TryPlaceThing(leftover, actor.Position, actor.Map, ThingPlaceMode.Near);
-                    actor.carryTracker.innerContainer.Clear();
-                }
-                else if (actor.carryTracker.CarriedThing == null)
-                {
-                    actor.carryTracker.innerContainer.Clear();
-                }
-
-                tracker.ReleaseTicket(actor, true, desired);
                 this.completedSuccessfully = true;
             };
-            deposit.defaultCompleteMode = ToilCompleteMode.Instant;
-            yield return deposit;
+            finalize.defaultCompleteMode = ToilCompleteMode.Instant;
+            yield return finalize;
         }
     }
 }

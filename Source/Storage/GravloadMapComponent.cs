@@ -16,6 +16,7 @@ namespace Deep_Gravload
         private List<ManagedParentState> savedSettingsState = new List<ManagedParentState>();
         private readonly HashSet<Building_Storage> pendingManagedBuildings = new HashSet<Building_Storage>();
         private readonly List<Building_Storage> tmpPendingBuildings = new List<Building_Storage>();
+        private readonly Dictionary<Thing, OverlayHandle?> overlayHandles = new Dictionary<Thing, OverlayHandle?>();
 
         public GravloadMapComponent(Map map) : base(map)
         {
@@ -130,6 +131,7 @@ namespace Deep_Gravload
             }
 
             this.ResolveStockManager();
+            this.ClearOverlayForParent(parent);
             this.stockManager?.UnregisterParent(parent);
             this.managedParents.Remove(parent);
 
@@ -144,15 +146,36 @@ namespace Deep_Gravload
         public void OnStoredThingReceived(ISlotGroupParent parent, Thing thing)
         {
             this.NotifyCargoWindowsDirty();
+            if (thing == null)
+            {
+                return;
+            }
+
+            if (parent != null && this.managedParents.Contains(parent))
+            {
+                this.EnableOverlay(thing);
+            }
         }
 
         public void OnStoredThingLost(Thing thing)
         {
             this.NotifyCargoWindowsDirty();
+            if (thing == null)
+            {
+                return;
+            }
+
+            this.DisableOverlay(thing);
         }
 
         public void NotifyItemPlacedInManagedCell(Thing thing)
         {
+            if (thing == null)
+            {
+                return;
+            }
+
+            this.EnableOverlay(thing);
         }
 
         public bool IsThingInManagedCell(Thing thing)
@@ -367,6 +390,7 @@ namespace Deep_Gravload
             }
 
             this.stockManager?.ForceImmediateRefresh();
+            this.ApplyOverlayForParent(parent);
             this.NotifyCargoWindowsDirty();
         }
 
@@ -377,6 +401,7 @@ namespace Deep_Gravload
                 return;
             }
 
+            this.ClearOverlayForParent(parent);
             this.stockManager?.UnregisterParent(parent);
             this.managedParents.Remove(parent);
 
@@ -573,6 +598,7 @@ namespace Deep_Gravload
 
                 this.stockManager.RegisterParent(stockId, building);
                 this.managedParents.Add(building);
+                this.ApplyOverlayForParent(building);
                 this.tmpPendingBuildings.Add(building);
                 processed = true;
             }
@@ -585,6 +611,131 @@ namespace Deep_Gravload
 
             this.tmpPendingBuildings.Clear();
             return processed;
+        }
+
+        private void ApplyOverlayForParent(ISlotGroupParent parent)
+        {
+            if (parent == null || this.map == null)
+            {
+                return;
+            }
+
+            this.ResolveStockManager();
+            if (this.stockManager == null)
+            {
+                return;
+            }
+
+            List<IntVec3> cells = parent.AllSlotCellsList();
+            for (int i = 0; i < cells.Count; i++)
+            {
+                IntVec3 cell = cells[i];
+                if (!cell.InBounds(this.map))
+                {
+                    continue;
+                }
+
+                List<Thing> things = cell.GetThingList(this.map);
+                for (int j = 0; j < things.Count; j++)
+                {
+                    Thing thing = things[j];
+                    if (thing == null || thing.def.category != ThingCategory.Item)
+                    {
+                        continue;
+                    }
+
+                    if (this.stockManager.GetStockOfThing(thing) != StockConstants.ColonyStockId)
+                    {
+                        this.EnableOverlay(thing);
+                    }
+                }
+            }
+        }
+
+        private void ClearOverlayForParent(ISlotGroupParent parent)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            List<IntVec3> cells = parent.AllSlotCellsList();
+            for (int i = 0; i < cells.Count; i++)
+            {
+                IntVec3 cell = cells[i];
+                if (!cell.InBounds(this.map))
+                {
+                    continue;
+                }
+
+                List<Thing> things = cell.GetThingList(this.map);
+                for (int j = 0; j < things.Count; j++)
+                {
+                    Thing thing = things[j];
+                    if (thing == null || thing.def.category != ThingCategory.Item)
+                    {
+                        continue;
+                    }
+
+                    this.DisableOverlay(thing);
+                }
+            }
+        }
+
+        private void EnableOverlay(Thing thing)
+        {
+            if (thing == null || !thing.Spawned || thing.Map != this.map || thing.def.category != ThingCategory.Item)
+            {
+                return;
+            }
+
+            this.ResolveStockManager();
+            if (this.stockManager == null)
+            {
+                return;
+            }
+
+            if (this.stockManager.GetStockOfThing(thing) == StockConstants.ColonyStockId)
+            {
+                this.DisableOverlay(thing);
+                return;
+            }
+
+            OverlayHandle? existing;
+            if (this.overlayHandles.TryGetValue(thing, out existing) && existing.HasValue)
+            {
+                this.map.overlayDrawer.Disable(thing, ref existing);
+            }
+
+            OverlayHandle overlayHandle = this.map.overlayDrawer.Enable(thing, OverlayTypes.QuestionMark);
+            this.overlayHandles[thing] = overlayHandle;
+        }
+
+        private void DisableOverlay(Thing thing)
+        {
+            if (thing == null)
+            {
+                return;
+            }
+
+            if (!this.overlayHandles.TryGetValue(thing, out OverlayHandle? handle))
+            {
+                return;
+            }
+
+            if (handle.HasValue)
+            {
+                if (thing.Spawned && thing.Map == this.map)
+                {
+                    this.map.overlayDrawer.Disable(thing, ref handle);
+                }
+                else
+                {
+                    this.map.overlayDrawer.DisposeHandle(thing);
+                }
+            }
+
+            this.overlayHandles.Remove(thing);
         }
 
         private bool TryEnsureStockForEngine(Building_GravEngine engine, out int stockId)

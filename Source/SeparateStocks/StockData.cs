@@ -199,15 +199,4 @@ namespace SeparateStocks
         }
     }
 
-    public class StockCellInfo
-    {
-        public readonly IntVec3 Cell;
-        public readonly StockRecord Stock;
-
-        public StockCellInfo(IntVec3 cell, StockRecord stock)
-        {
-            this.Cell = cell;
-            this.Stock = stock;
-        }
-    }
 }
