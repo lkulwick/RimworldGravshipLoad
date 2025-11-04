@@ -50,7 +50,11 @@ namespace Deep_Gravload
         public override void MapComponentTick()
         {
             base.MapComponentTick();
-            this.ProcessPendingManagedBuildings();
+            if (this.ProcessPendingManagedBuildings())
+            {
+                this.stockManager?.ForceImmediateRefresh();
+                this.NotifyCargoWindowsDirty();
+            }
         }
 
         public void NotifyManagedBuildingSpawned(Building_Storage storage)
@@ -65,7 +69,11 @@ namespace Deep_Gravload
                 return;
             }
 
-            this.ProcessPendingManagedBuildings();
+            if (this.ProcessPendingManagedBuildings())
+            {
+                this.stockManager?.ForceImmediateRefresh();
+                this.NotifyCargoWindowsDirty();
+            }
         }
 
         public bool IsManaged(Building_Storage storage)
@@ -135,10 +143,12 @@ namespace Deep_Gravload
 
         public void OnStoredThingReceived(ISlotGroupParent parent, Thing thing)
         {
+            this.NotifyCargoWindowsDirty();
         }
 
         public void OnStoredThingLost(Thing thing)
         {
+            this.NotifyCargoWindowsDirty();
         }
 
         public void NotifyItemPlacedInManagedCell(Thing thing)
@@ -261,6 +271,7 @@ namespace Deep_Gravload
 
             if (this.stockManager != null && this.stockManager.TryStartTransferOperation(stockId, loadSelections, unloadSelections, out failureReason))
             {
+                this.NotifyCargoWindowsDirty();
                 return true;
             }
 
@@ -298,6 +309,7 @@ namespace Deep_Gravload
             if (this.TryGetStockIdForEngine(engine, out int stockId))
             {
                 this.stockManager.CancelOperationsForStock(stockId);
+                this.NotifyCargoWindowsDirty();
             }
         }
 
@@ -353,6 +365,9 @@ namespace Deep_Gravload
             {
                 this.pendingManagedBuildings.Remove(building);
             }
+
+            this.stockManager?.ForceImmediateRefresh();
+            this.NotifyCargoWindowsDirty();
         }
 
         private void DisableParent(ISlotGroupParent parent)
@@ -378,6 +393,8 @@ namespace Deep_Gravload
             }
 
             this.savedSettings.Remove(parent);
+            this.stockManager?.ForceImmediateRefresh();
+            this.NotifyCargoWindowsDirty();
         }
 
         private void SerializeManagedParents()
@@ -442,6 +459,8 @@ namespace Deep_Gravload
                     this.savedSettings[parent] = state.Settings;
                 }
             }
+
+            this.NotifyCargoWindowsDirty();
         }
 
         private void ResolveStockManager()
@@ -512,16 +531,20 @@ namespace Deep_Gravload
                 }
             }
 
-            this.ProcessPendingManagedBuildings();
+            if (this.ProcessPendingManagedBuildings())
+            {
+                this.NotifyCargoWindowsDirty();
+            }
         }
 
-        private void ProcessPendingManagedBuildings()
+        private bool ProcessPendingManagedBuildings()
         {
             if (this.pendingManagedBuildings.Count == 0 || this.stockManager == null)
             {
-                return;
+                return false;
             }
 
+            bool processed = false;
             this.tmpPendingBuildings.Clear();
 
             foreach (Building_Storage building in this.pendingManagedBuildings)
@@ -551,6 +574,7 @@ namespace Deep_Gravload
                 this.stockManager.RegisterParent(stockId, building);
                 this.managedParents.Add(building);
                 this.tmpPendingBuildings.Add(building);
+                processed = true;
             }
 
             for (int i = 0; i < this.tmpPendingBuildings.Count; i++)
@@ -560,6 +584,7 @@ namespace Deep_Gravload
             }
 
             this.tmpPendingBuildings.Clear();
+            return processed;
         }
 
         private bool TryEnsureStockForEngine(Building_GravEngine engine, out int stockId)
@@ -654,6 +679,17 @@ namespace Deep_Gravload
             }
 
             return null;
+        }
+
+        private void NotifyCargoWindowsDirty()
+        {
+            if (Find.WindowStack == null)
+            {
+                return;
+            }
+
+            Dialog_GravloadCargo dialog = Find.WindowStack.WindowOfType<Dialog_GravloadCargo>();
+            dialog?.MarkDirty();
         }
 
         private class ManagedParentState : IExposable

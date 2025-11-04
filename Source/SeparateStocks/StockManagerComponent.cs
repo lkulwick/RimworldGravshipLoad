@@ -326,6 +326,12 @@ namespace SeparateStocks
             stock.NeedsRefresh = false;
         }
 
+        public void ForceImmediateRefresh()
+        {
+            this.RefreshAllCells();
+            this.cellsDirty = false;
+        }
+
         public bool HasActiveOperations
         {
             get

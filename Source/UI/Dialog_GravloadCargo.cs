@@ -14,6 +14,8 @@ namespace Deep_Gravload
         private readonly List<TransferableOneWay> transferables = new List<TransferableOneWay>();
         private readonly Dictionary<TransferableOneWay, int> initialShipCounts = new Dictionary<TransferableOneWay, int>();
         private readonly HashSet<Thing> shipThings = new HashSet<Thing>();
+        private const int AutoRefreshIntervalTicks = 30;
+        private int nextRefreshTick;
         private static readonly MethodInfo SetCountToTransferMethod = AccessTools.PropertySetter(typeof(TransferableOneWay), "CountToTransfer");
         private static readonly FieldInfo CountToTransferField = AccessTools.Field(typeof(TransferableOneWay), "countToTransfer");
         private TransferableOneWayWidget widget;
@@ -55,7 +57,7 @@ namespace Deep_Gravload
             }
         }
 
-        private void RebuildTransferables()
+        private void RebuildTransferables(Dictionary<string, int> loadSelections = null, Dictionary<string, int> unloadSelections = null)
         {
             this.transferables.Clear();
             this.initialShipCounts.Clear();
@@ -121,14 +123,12 @@ namespace Deep_Gravload
                     initialCount = transferableOneWay.MaxCount;
                 }
 
-                if (SetCountToTransferMethod != null)
-                {
-                    SetCountToTransferMethod.Invoke(transferableOneWay, new object[] { initialCount });
-                }
-                else if (CountToTransferField != null)
-                {
-                    CountToTransferField.SetValue(transferableOneWay, initialCount);
-                }
+                this.SetTransferableCount(transferableOneWay, initialCount);
+            }
+
+            if ((loadSelections != null && loadSelections.Count > 0) || (unloadSelections != null && unloadSelections.Count > 0))
+            {
+                this.ApplySelections(loadSelections, unloadSelections);
             }
 
             this.widget = new TransferableOneWayWidget(
@@ -153,6 +153,151 @@ namespace Deep_Gravload
                 false,
                 false,
                 false);
+
+            this.ScheduleNextRefresh();
+        }
+
+        private void CaptureSelections(out Dictionary<string, int> loadSelections, out Dictionary<string, int> unloadSelections)
+        {
+            loadSelections = new Dictionary<string, int>();
+            unloadSelections = new Dictionary<string, int>();
+
+            for (int i = 0; i < this.transferables.Count; i++)
+            {
+                TransferableOneWay transferable = this.transferables[i];
+                int initialCount;
+                this.initialShipCounts.TryGetValue(transferable, out initialCount);
+
+                int targetCount = transferable.CountToTransfer;
+                if (targetCount == initialCount)
+                {
+                    continue;
+                }
+
+                if (targetCount > initialCount)
+                {
+                    int remaining = targetCount - initialCount;
+                    for (int j = 0; j < transferable.things.Count && remaining > 0; j++)
+                    {
+                        Thing thing = transferable.things[j];
+                        if (this.shipThings.Contains(thing))
+                        {
+                            continue;
+                        }
+
+                        int take = Mathf.Min(remaining, thing.stackCount);
+                        if (take > 0)
+                        {
+                            loadSelections[thing.ThingID] = take;
+                            remaining -= take;
+                        }
+                    }
+                }
+                else
+                {
+                    int remaining = initialCount - targetCount;
+                    for (int j = 0; j < transferable.things.Count && remaining > 0; j++)
+                    {
+                        Thing thing = transferable.things[j];
+                        if (!this.shipThings.Contains(thing))
+                        {
+                            continue;
+                        }
+
+                        int take = Mathf.Min(remaining, thing.stackCount);
+                        if (take > 0)
+                        {
+                            unloadSelections[thing.ThingID] = take;
+                            remaining -= take;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void ApplySelections(Dictionary<string, int> loadSelections, Dictionary<string, int> unloadSelections)
+        {
+            for (int i = 0; i < this.transferables.Count; i++)
+            {
+                TransferableOneWay transferable = this.transferables[i];
+                int initialCount;
+                this.initialShipCounts.TryGetValue(transferable, out initialCount);
+                int targetCount = initialCount;
+
+                for (int j = 0; j < transferable.things.Count; j++)
+                {
+                    Thing thing = transferable.things[j];
+                    string thingId = thing.ThingID;
+
+                    if (this.shipThings.Contains(thing))
+                    {
+                        if (unloadSelections != null && unloadSelections.TryGetValue(thingId, out int unloadValue))
+                        {
+                            int applied = Mathf.Min(unloadValue, thing.stackCount);
+                            targetCount -= applied;
+                        }
+                    }
+                    else
+                    {
+                        if (loadSelections != null && loadSelections.TryGetValue(thingId, out int loadValue))
+                        {
+                            int applied = Mathf.Min(loadValue, thing.stackCount);
+                            targetCount += applied;
+                        }
+                    }
+                }
+
+                targetCount = Mathf.Clamp(targetCount, 0, transferable.MaxCount);
+                this.SetTransferableCount(transferable, targetCount);
+            }
+        }
+
+        private void RefreshTransferablesPreservingSelection()
+        {
+            Dictionary<string, int> loadSelections;
+            Dictionary<string, int> unloadSelections;
+            this.CaptureSelections(out loadSelections, out unloadSelections);
+            this.RebuildTransferables(loadSelections, unloadSelections);
+        }
+
+        private void SetTransferableCount(TransferableOneWay transferable, int value)
+        {
+            if (SetCountToTransferMethod != null)
+            {
+                SetCountToTransferMethod.Invoke(transferable, new object[] { value });
+            }
+            else if (CountToTransferField != null)
+            {
+                CountToTransferField.SetValue(transferable, value);
+            }
+        }
+
+        public override void WindowUpdate()
+        {
+            base.WindowUpdate();
+
+            if (Find.TickManager == null)
+            {
+                return;
+            }
+
+            if (Find.TickManager.TicksGame >= this.nextRefreshTick)
+            {
+                this.RefreshTransferablesPreservingSelection();
+            }
+        }
+
+        public void MarkDirty()
+        {
+            this.nextRefreshTick = 0;
+        }
+
+        private void ScheduleNextRefresh()
+        {
+            if (Find.TickManager != null)
+            {
+                this.nextRefreshTick = Find.TickManager.TicksGame + AutoRefreshIntervalTicks;
+            }
         }
 
         private bool ShouldConsider(Thing thing, GravloadMapComponent tracker)
