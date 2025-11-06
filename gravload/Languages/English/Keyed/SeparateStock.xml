@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <SeparateStock_NoRoom>No destination space available in the separate stock.</SeparateStock_NoRoom>
+  <SeparateStock_ToggleLabel>Separate stock</SeparateStock_ToggleLabel>
+  <SeparateStock_ToggleDesc>Include or exclude this stockpile or storage building from the separate stock.</SeparateStock_ToggleDesc>
+  <SeparateStock_ManageLabel>Manage stock</SeparateStock_ManageLabel>
+  <SeparateStock_ManageDesc>Open the management dialog to load or unload items.</SeparateStock_ManageDesc>
+  <SeparateStock_Header>Manage the separate stock. Pawns only move items here when explicitly ordered.</SeparateStock_Header>
+  <SeparateStock_AllowAutoUse>Allow pawn auto use</SeparateStock_AllowAutoUse>
+  <SeparateStock_LoadLabel>Load items (colony ➜ stock)</SeparateStock_LoadLabel>
+  <SeparateStock_UnloadLabel>Unload items (stock ➜ colony)</SeparateStock_UnloadLabel>
+  <SeparateStock_NoTransfersQueued>No transfers scheduled.</SeparateStock_NoTransfersQueued>
+  <SeparateStock_Reset>Reset counts</SeparateStock_Reset>
+</LanguageData>

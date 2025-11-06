@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <JobDef>
+    <defName>SeparateStockTransfer</defName>
+    <driverClass>Deep_Gravload.SeparateStocks.JobDriver_SeparateStockTransfer</driverClass>
+    <reportString>moving items for the separate stock.</reportString>
+    <casualInterruptible>true</casualInterruptible>
+    <checkOverrideOnDamage>OnlyIfInstigatorNotJobTarget</checkOverrideOnDamage>
+  </JobDef>
+</Defs>

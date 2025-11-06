@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <WorkGiverDef>
+    <defName>SeparateStockTransferer</defName>
+    <label>separate stock transfer</label>
+    <giverClass>Deep_Gravload.SeparateStocks.WorkGiver_SeparateStockTransfer</giverClass>
+    <workType>Hauling</workType>
+    <priorityInType>1400</priorityInType>
+    <verb>haul</verb>
+    <gerund>hauling</gerund>
+    <requiredCapacities>
+      <li>Manipulation</li>
+    </requiredCapacities>
+    <emergency>true</emergency>
+  </WorkGiverDef>
+</Defs>
