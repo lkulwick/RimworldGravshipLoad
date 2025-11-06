@@ -56,6 +56,11 @@ namespace Deep_Gravload
             this.FailOnDestroyedNullOrForbidden(CargoInd);
             this.FailOn(delegate
             {
+                if (this.completedSuccessfully)
+                {
+                    return false;
+                }
+
                 GravloadMapComponent tracker = ManagedStorageUtility.GetTracker(this.pawn.Map);
                 if (tracker == null)
                 {
@@ -110,6 +115,11 @@ namespace Deep_Gravload
                 GravloadMapComponent tracker = ManagedStorageUtility.GetTracker(actor.Map);
                 IntVec3 cell = actor.CurJob.GetTarget(CellInd).Cell;
 
+                StockJobTicket ticket = tracker?.GetTicket(actor);
+                int delivered = ticket?.Count ?? this.job.count;
+
+                this.completedSuccessfully = true;
+
                 if (tracker != null)
                 {
                     List<Thing> things = cell.GetThingList(actor.Map);
@@ -118,10 +128,8 @@ namespace Deep_Gravload
                         tracker.NotifyItemPlacedInManagedCell(things[i]);
                     }
 
-                    tracker.ReleaseTicket(actor, true, this.job.count);
+                    tracker.ReleaseTicket(actor, true, delivered);
                 }
-
-                this.completedSuccessfully = true;
             };
             finalize.defaultCompleteMode = ToilCompleteMode.Instant;
             yield return finalize;

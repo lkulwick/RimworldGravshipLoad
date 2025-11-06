@@ -37,6 +37,7 @@ namespace Deep_Gravload
                 this.ResolveStockManager();
                 this.RestoreSavedSettings();
                 this.RebuildMappings();
+                this.RefreshAllOverlays();
             }
         }
 
@@ -46,6 +47,7 @@ namespace Deep_Gravload
             this.ResolveStockManager();
             this.RestoreSavedSettings();
             this.RebuildMappings();
+            this.RefreshAllOverlays();
         }
 
         public override void MapComponentTick()
@@ -560,6 +562,8 @@ namespace Deep_Gravload
             {
                 this.NotifyCargoWindowsDirty();
             }
+
+            this.RefreshAllOverlays();
         }
 
         private bool ProcessPendingManagedBuildings()
@@ -611,6 +615,23 @@ namespace Deep_Gravload
 
             this.tmpPendingBuildings.Clear();
             return processed;
+        }
+
+        private void RefreshAllOverlays()
+        {
+            if (this.overlayHandles.Count > 0)
+            {
+                List<Thing> trackedThings = new List<Thing>(this.overlayHandles.Keys);
+                for (int i = 0; i < trackedThings.Count; i++)
+                {
+                    this.DisableOverlay(trackedThings[i]);
+                }
+            }
+
+            foreach (ISlotGroupParent parent in this.managedParents)
+            {
+                this.ApplyOverlayForParent(parent);
+            }
         }
 
         private void ApplyOverlayForParent(ISlotGroupParent parent)

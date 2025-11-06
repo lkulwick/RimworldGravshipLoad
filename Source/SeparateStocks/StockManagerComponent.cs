@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using RimWorld;
 using Verse;
@@ -722,6 +722,30 @@ namespace SeparateStocks
                     return false;
                 }
 
+                if (this.GetStockOfCell(storeCell) != StockConstants.ColonyStockId)
+                {
+                    if (!this.TryFindColonyStoreCell(thing, pawn, currentPriority, desired, out storeCell))
+                    {
+                        return false;
+                    }
+                }
+
+                int availableSpace = storeCell.GetItemStackSpaceLeftFor(this.map, thing.def);
+                if (availableSpace <= 0)
+                {
+                    return false;
+                }
+
+                if (availableSpace < desired)
+                {
+                    desired = availableSpace;
+                }
+
+                if (desired <= 0)
+                {
+                    return false;
+                }
+
                 if (!ReservationUtility.CanReserve(pawn, new LocalTargetInfo(storeCell), 1, -1, null, forced))
                 {
                     return false;
@@ -836,6 +860,68 @@ namespace SeparateStocks
             }
 
             return true;
+        }
+
+        private bool TryFindColonyStoreCell(Thing thing, Pawn pawn, StoragePriority currentPriority, int desiredCount, out IntVec3 storeCell)
+        {
+            storeCell = IntVec3.Invalid;
+            if (this.map?.haulDestinationManager == null)
+            {
+                return false;
+            }
+
+            List<SlotGroup> groups = this.map.haulDestinationManager.AllGroupsListInPriorityOrder;
+            if (groups == null || groups.Count == 0)
+            {
+                return false;
+            }
+
+            IntVec3 origin = thing.Spawned ? thing.Position : (pawn != null ? pawn.Position : IntVec3.Invalid);
+            StoragePriority bestPriority = StoragePriority.Unstored;
+            float bestDistance = float.MaxValue;
+
+            for (int i = 0; i < groups.Count; i++)
+            {
+                SlotGroup group = groups[i];
+                StoragePriority priority = group.Settings.Priority;
+
+                if (this.parentToStock.ContainsKey(group.parent))
+                {
+                    continue;
+                }
+
+                if (!group.parent.HaulDestinationEnabled || !group.Settings.AllowedToAccept(thing))
+                {
+                    continue;
+                }
+
+                List<IntVec3> cells = group.CellsList;
+                for (int j = 0; j < cells.Count; j++)
+                {
+                    IntVec3 cell = cells[j];
+                    if (!StoreUtility.IsGoodStoreCell(cell, this.map, thing, pawn, pawn?.Faction ?? Faction.OfPlayer))
+                    {
+                        continue;
+                    }
+
+                    int space = cell.GetItemStackSpaceLeftFor(this.map, thing.def);
+                    if (space <= 0)
+                    {
+                        continue;
+                    }
+
+                    float distance = origin.IsValid ? (origin - cell).LengthHorizontalSquared : 0f;
+
+                    if (!storeCell.IsValid || (int)priority > (int)bestPriority || ((int)priority == (int)bestPriority && distance < bestDistance))
+                    {
+                        storeCell = cell;
+                        bestPriority = priority;
+                        bestDistance = distance;
+                    }
+                }
+            }
+
+            return storeCell.IsValid;
         }
 
         private bool TryFindStockCellWithCapacity(int stockId, Thing thing, int desiredCount, StockTransferOperation operation, Dictionary<IntVec3, int> simulatedReservations, out IntVec3 cell, out int count)
@@ -986,3 +1072,4 @@ namespace SeparateStocks
         }
     }
 }
+
