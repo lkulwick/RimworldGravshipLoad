@@ -319,6 +319,29 @@ public sealed class SeparateStockManager : MapComponent
         transfer.ReservedBy = null;
     }
 
+    public bool CancelTransfer(TransferThing transfer)
+    {
+        if (transfer == null)
+        {
+            return false;
+        }
+
+        var operation = FindOperation(transfer.OperationId);
+        if (operation == null)
+        {
+            return false;
+        }
+
+        ReleaseTransfer(transfer);
+        if (operation.CancelTransfer(transfer))
+        {
+            SeparateStockLog.Message($"Cancelled transfer for {transfer.Thing?.LabelCap ?? "null"}.");
+            return true;
+        }
+
+        return false;
+    }
+
     public bool TryFindStorageCellForTransfer(Pawn pawn, Thing thing, out IntVec3 cell, out ISlotGroupParent parent)
     {
         cell = IntVec3.Invalid;
@@ -646,6 +669,26 @@ public sealed class SeparateStockTransferOperation : IExposable
             }
         }
         CheckCompletion();
+    }
+
+    public bool CancelTransfer(TransferThing entry)
+    {
+        if (entry == null)
+        {
+            return false;
+        }
+
+        int index = _pendingThings.IndexOf(entry);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        var cancelledThing = _pendingThings[index].Thing;
+        _pendingThings.RemoveAt(index);
+        SeparateStockLog.Message($"Operation {Id}: cancelled transfer of {cancelledThing?.LabelCap ?? "null"}.");
+        CheckCompletion();
+        return true;
     }
 
     public void CheckCompletion()

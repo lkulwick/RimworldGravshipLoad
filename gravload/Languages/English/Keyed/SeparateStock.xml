@@ -12,4 +12,7 @@
   <SeparateStock_SourceCountTip>Available count</SeparateStock_SourceCountTip>
   <SeparateStock_NoTransfersQueued>No transfers scheduled.</SeparateStock_NoTransfersQueued>
   <SeparateStock_Reset>Reset counts</SeparateStock_Reset>
+  <SeparateStock_PendingHeader>Pending transfers</SeparateStock_PendingHeader>
+  <SeparateStock_PendingEmpty>No pending transfers.</SeparateStock_PendingEmpty>
+  <SeparateStock_CancelTransfer>Cancel</SeparateStock_CancelTransfer>
 </LanguageData>

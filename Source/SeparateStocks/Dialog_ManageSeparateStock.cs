@@ -13,6 +13,8 @@ public sealed class Dialog_ManageSeparateStock : Window
 
     private readonly List<TransferableOneWay> _loadTransferables = new List<TransferableOneWay>();
     private readonly List<TransferableOneWay> _unloadTransferables = new List<TransferableOneWay>();
+    private readonly List<TransferThing> _pendingTransfers = new List<TransferThing>();
+    private Vector2 _pendingScrollPosition;
 
     private TransferableOneWayWidget _transferWidget;
 
@@ -80,7 +82,11 @@ public sealed class Dialog_ManageSeparateStock : Window
         var topRect = new Rect(inRect.x, inRect.y, inRect.width, 32f);
         DrawHeader(topRect);
 
-        var widgetRect = new Rect(inRect.x, topRect.yMax + 4f, inRect.width, inRect.height - topRect.height - 60f);
+        float pendingHeight = 150f;
+        var pendingRect = new Rect(inRect.x, topRect.yMax + 4f, inRect.width, pendingHeight);
+        DrawPendingTransfers(pendingRect);
+
+        var widgetRect = new Rect(inRect.x, pendingRect.yMax + 4f, inRect.width, inRect.height - topRect.height - pendingHeight - 60f - 8f);
         _transferWidget.OnGUI(widgetRect, out _);
 
         var bottomRect = new Rect(inRect.x, inRect.yMax - 45f, inRect.width, 45f);
@@ -98,6 +104,84 @@ public sealed class Dialog_ManageSeparateStock : Window
         {
             _manager.SeparateStock.AllowPawnAutoUse = allowUse;
             SeparateStockLog.Message($"AllowPawnAutoUse toggled: {allowUse}");
+        }
+    }
+
+    private void DrawPendingTransfers(Rect rect)
+    {
+        var headerRect = new Rect(rect.x, rect.y, rect.width, 24f);
+        Widgets.Label(headerRect, "SeparateStock_PendingHeader".Translate());
+
+        var listRect = new Rect(rect.x, headerRect.yMax, rect.width, rect.height - headerRect.height);
+        Widgets.DrawMenuSection(listRect);
+        var innerRect = listRect.ContractedBy(4f);
+
+        GatherPendingTransfers();
+        if (_pendingTransfers.Count == 0)
+        {
+            Widgets.Label(innerRect, "SeparateStock_PendingEmpty".Translate());
+            return;
+        }
+
+        const float rowHeight = 28f;
+        var viewRect = new Rect(0f, 0f, innerRect.width - 16f, _pendingTransfers.Count * rowHeight);
+        Widgets.BeginScrollView(innerRect, ref _pendingScrollPosition, viewRect);
+        float curY = 0f;
+        for (int i = 0; i < _pendingTransfers.Count; i++)
+        {
+            var transfer = _pendingTransfers[i];
+            var rowRect = new Rect(0f, curY, viewRect.width, rowHeight);
+            if (i % 2 == 0)
+            {
+                Widgets.DrawAltRect(rowRect);
+            }
+            if (transfer != null)
+            {
+                DrawPendingTransferRow(rowRect, transfer);
+            }
+            curY += rowHeight;
+        }
+        Widgets.EndScrollView();
+    }
+
+    private void GatherPendingTransfers()
+    {
+        _pendingTransfers.Clear();
+        if (_manager == null)
+        {
+            return;
+        }
+
+        var operations = _manager.Operations;
+        for (int i = 0; i < operations.Count; i++)
+        {
+            var pending = operations[i].PendingThings;
+            for (int j = 0; j < pending.Count; j++)
+            {
+                var transfer = pending[j];
+                if (transfer != null && transfer.RemainingCount > 0)
+                {
+                    _pendingTransfers.Add(transfer);
+                }
+            }
+        }
+    }
+
+    private void DrawPendingTransferRow(Rect rect, TransferThing transfer)
+    {
+        var textRect = new Rect(rect.x + 4f, rect.y, rect.width - 90f, rect.height);
+        var cancelRect = new Rect(rect.xMax - 80f, rect.y + 3f, 76f, rect.height - 6f);
+
+        string dirLabel = transfer.Direction == TransferDirection.ColonyToStock ? "SeparateStock_LoadLabel".Translate() : "SeparateStock_UnloadLabel".Translate();
+        string thingLabel = transfer.Thing?.LabelCap ?? "Missing";
+        Widgets.Label(textRect, $"{dirLabel}: {thingLabel} x{transfer.RemainingCount}");
+
+        if (Widgets.ButtonText(cancelRect, "SeparateStock_CancelTransfer".Translate()))
+        {
+            if (_manager.CancelTransfer(transfer))
+            {
+                GatherPendingTransfers();
+            }
         }
     }
 
