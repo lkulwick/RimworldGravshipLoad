@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using RimWorld;
+using UnityEngine;
 using Verse;
 
 namespace Deep_Gravload.SeparateStocks
@@ -195,6 +196,17 @@ public sealed class SeparateStockManager : MapComponent
 
     public SeparateStockTransferOperation CreateOperation(TransferDirection direction, List<TransferThing> requests)
     {
+        if (requests == null || requests.Count == 0)
+        {
+            return null;
+        }
+
+        if (direction == TransferDirection.StockToColony)
+        {
+            PerformImmediateUnload(requests);
+            return null;
+        }
+
         var op = new SeparateStockTransferOperation(this, direction, requests);
         _operations.Add(op);
         SeparateStockLog.Message($"Created transfer operation {op.Id} ({direction}) with {requests.Count} entries.");
@@ -398,6 +410,54 @@ public sealed class SeparateStockManager : MapComponent
 
         return parent.ToString();
     }
+
+    private void PerformImmediateUnload(List<TransferThing> transfers)
+    {
+        if (transfers == null || map == null)
+        {
+            return;
+        }
+
+        bool anyDropped = false;
+        bool warnedNoSpace = false;
+
+        for (int i = 0; i < transfers.Count; i++)
+        {
+            var transfer = transfers[i];
+            var thing = transfer?.Thing;
+            if (thing == null || thing.MapHeld != map || !thing.Spawned)
+            {
+                continue;
+            }
+
+            int remaining = transfer.RemainingCount;
+            while (remaining > 0 && thing.Spawned && thing.stackCount > 0)
+            {
+                int toMove = Mathf.Min(remaining, thing.stackCount);
+                if (!TryGetDropCellOutsideStock(thing.Position, out var dropCell))
+                {
+                    if (!warnedNoSpace)
+                    {
+                        Messages.Message("SeparateStock_NoRoom".Translate(), MessageTypeDefOf.RejectInput, historical: false);
+                        warnedNoSpace = true;
+                    }
+                    break;
+                }
+
+                var split = thing.SplitOff(toMove);
+                GenPlace.TryPlaceThing(split, dropCell, map, ThingPlaceMode.Near);
+                remaining -= toMove;
+                anyDropped = true;
+            }
+
+            transfer.RemainingCount = remaining;
+        }
+
+        if (anyDropped)
+        {
+            SeparateStockLog.Message("Instantly unloaded separate stock items.");
+        }
+    }
 }
 }
 
@@ -574,6 +634,7 @@ public sealed class SeparateStockRecord : IExposable
 
     private readonly HashSet<IntVec3> _cachedCells = new HashSet<IntVec3>();
 
+    private List<int> _zoneIdsSerialized = new List<int>();
     private List<Zone_Stockpile> _zones = new List<Zone_Stockpile>();
     private List<Thing> _buildings = new List<Thing>();
 
@@ -711,13 +772,58 @@ public sealed class SeparateStockRecord : IExposable
 
     public void ExposeData()
     {
-        Scribe_Collections.Look(ref _zones, "zones", LookMode.Reference);
+        if (_zoneIdsSerialized == null)
+        {
+            _zoneIdsSerialized = new List<int>();
+        }
+
+        if (Scribe.mode == LoadSaveMode.Saving)
+        {
+            _zoneIdsSerialized.Clear();
+            for (int i = 0; i < _zones.Count; i++)
+            {
+                if (_zones[i] != null)
+                {
+                    _zoneIdsSerialized.Add(_zones[i].ID);
+                }
+            }
+        }
+
+        Scribe_Collections.Look(ref _zoneIdsSerialized, "zoneIds", LookMode.Value);
         Scribe_Collections.Look(ref _buildings, "buildings", LookMode.Reference);
         Scribe_Values.Look(ref AllowPawnAutoUse, "allowPawnAutoUse", false);
 
         if (Scribe.mode == LoadSaveMode.PostLoadInit)
         {
+            if (_zoneIdsSerialized == null)
+            {
+                _zoneIdsSerialized = new List<int>();
+            }
+            RestoreZonesFromIds();
             CleanupDestroyedMembers();
+        }
+    }
+
+    private void RestoreZonesFromIds()
+    {
+        _zones.Clear();
+        if (_zoneIdsSerialized == null || _manager?.map?.zoneManager == null)
+        {
+            return;
+        }
+
+        var allZones = _manager.map.zoneManager.AllZones;
+        for (int i = 0; i < _zoneIdsSerialized.Count; i++)
+        {
+            int targetId = _zoneIdsSerialized[i];
+            for (int j = 0; j < allZones.Count; j++)
+            {
+                if (allZones[j] is Zone_Stockpile stock && stock.ID == targetId)
+                {
+                    _zones.Add(stock);
+                    break;
+                }
+            }
         }
     }
 }

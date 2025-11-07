@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using HarmonyLib;
 using RimWorld;
+using UnityEngine;
 using Verse;
 
 namespace Deep_Gravload.SeparateStocks.Patches
@@ -34,10 +35,11 @@ namespace Deep_Gravload.SeparateStocks.Patches
         }
     }
 
+    [StaticConstructorOnStartup]
     internal static class SeparateStockGizmoUtility
     {
-        private static readonly CachedTexture IconToggleOn = new CachedTexture("UI/Commands/SetForbidOn");
-        private static readonly CachedTexture IconToggleOff = new CachedTexture("UI/Commands/SetForbid");
+        private static readonly Texture2D IconToggleOn = TexButton.ToggleDevPalette;
+        private static readonly Texture2D IconToggleOff = TexButton.ToggleLog;
 
         public static IEnumerable<Gizmo> GetGizmos(ISlotGroupParent parent)
         {
@@ -59,9 +61,9 @@ namespace Deep_Gravload.SeparateStocks.Patches
             {
                 defaultLabel = "SeparateStock_ToggleLabel".Translate(),
                 defaultDesc = "SeparateStock_ToggleDesc".Translate(),
-                icon = inStock ? IconToggleOn.Texture : IconToggleOff.Texture,
+                icon = inStock ? IconToggleOn : IconToggleOff,
                 isActive = () => manager.ParentInSeparateStock(parent),
-            toggleAction = () => manager.ToggleParentMembership(parent)
+                toggleAction = () => manager.ToggleParentMembership(parent)
             };
             yield return toggle;
 

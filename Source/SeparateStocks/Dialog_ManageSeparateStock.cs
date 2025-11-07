@@ -11,11 +11,10 @@ public sealed class Dialog_ManageSeparateStock : Window
     private readonly Map _map;
     private readonly SeparateStockManager _manager;
 
-    private List<TransferableOneWay> _loadTransferables = new List<TransferableOneWay>();
-    private List<TransferableOneWay> _unloadTransferables = new List<TransferableOneWay>();
+    private readonly List<TransferableOneWay> _loadTransferables = new List<TransferableOneWay>();
+    private readonly List<TransferableOneWay> _unloadTransferables = new List<TransferableOneWay>();
 
-    private TransferableOneWayWidget _loadWidget;
-    private TransferableOneWayWidget _unloadWidget;
+    private TransferableOneWayWidget _transferWidget;
 
     public override Vector2 InitialSize => new Vector2(960f, 680f);
 
@@ -33,8 +32,9 @@ public sealed class Dialog_ManageSeparateStock : Window
     private void Resize()
     {
         BuildTransferables();
-        _loadWidget = new TransferableOneWayWidget(_loadTransferables, null, null, "SeparateStock_LoadLabel".Translate(), drawMass: false);
-        _unloadWidget = new TransferableOneWayWidget(_unloadTransferables, null, null, "SeparateStock_UnloadLabel".Translate(), drawMass: false);
+        _transferWidget = new TransferableOneWayWidget(null, null, null, "SeparateStock_SourceCountTip".Translate(), drawMass: false);
+        _transferWidget.AddSection("SeparateStock_LoadLabel".Translate(), _loadTransferables);
+        _transferWidget.AddSection("SeparateStock_UnloadLabel".Translate(), _unloadTransferables);
     }
 
     private void BuildTransferables()
@@ -44,16 +44,16 @@ public sealed class Dialog_ManageSeparateStock : Window
 
         foreach (var thing in SeparateStockUtility.ColonyThingsForLoad(_map))
         {
-            AddToTransferables(thing, _loadTransferables);
+            AddToTransferables(thing, _loadTransferables, reverse: false);
         }
 
         foreach (var thing in SeparateStockUtility.SeparateStockThings(_map))
         {
-            AddToTransferables(thing, _unloadTransferables);
+            AddToTransferables(thing, _unloadTransferables, reverse: true);
         }
     }
 
-    private static void AddToTransferables(Thing thing, List<TransferableOneWay> list)
+    private static void AddToTransferables(Thing thing, List<TransferableOneWay> list, bool reverse)
     {
         if (thing == null || thing.Destroyed)
         {
@@ -63,7 +63,7 @@ public sealed class Dialog_ManageSeparateStock : Window
         var transferable = TransferableUtility.TransferableMatching(thing, list, TransferAsOneMode.PodsOrCaravanPacking);
         if (transferable == null)
         {
-            transferable = new TransferableOneWay();
+            transferable = reverse ? new TransferableOneWayReverse() : new TransferableOneWay();
             list.Add(transferable);
         }
         transferable.things.Add(thing);
@@ -80,15 +80,8 @@ public sealed class Dialog_ManageSeparateStock : Window
         var topRect = new Rect(inRect.x, inRect.y, inRect.width, 32f);
         DrawHeader(topRect);
 
-        var listingRect = new Rect(inRect.x, topRect.yMax + 4f, inRect.width, inRect.height - topRect.height - 60f);
-
-        float columnSpacing = 14f;
-        float columnWidth = (listingRect.width - columnSpacing) / 2f;
-        var loadRect = new Rect(listingRect.x, listingRect.y, columnWidth, listingRect.height);
-        var unloadRect = new Rect(loadRect.xMax + columnSpacing, listingRect.y, columnWidth, listingRect.height);
-
-        DrawSection(loadRect, "SeparateStock_LoadLabel".Translate(), _loadWidget);
-        DrawSection(unloadRect, "SeparateStock_UnloadLabel".Translate(), _unloadWidget);
+        var widgetRect = new Rect(inRect.x, topRect.yMax + 4f, inRect.width, inRect.height - topRect.height - 60f);
+        _transferWidget.OnGUI(widgetRect, out _);
 
         var bottomRect = new Rect(inRect.x, inRect.yMax - 45f, inRect.width, 45f);
         DrawBottomButtons(bottomRect);
@@ -108,26 +101,6 @@ public sealed class Dialog_ManageSeparateStock : Window
         }
     }
 
-    private static void DrawSection(Rect rect, TaggedString label, TransferableOneWayWidget widget)
-    {
-        var titleRect = new Rect(rect.x, rect.y, rect.width, 24f);
-        Text.Anchor = TextAnchor.MiddleCenter;
-        Widgets.Label(titleRect, label);
-        Text.Anchor = TextAnchor.UpperLeft;
-
-        var listRect = new Rect(rect.x, titleRect.yMax + 2f, rect.width, rect.height - 26f);
-        GUI.BeginGroup(listRect);
-        try
-        {
-            var innerRect = new Rect(0f, 0f, listRect.width, listRect.height);
-            widget.OnGUI(innerRect, out _);
-        }
-        finally
-        {
-            GUI.EndGroup();
-        }
-    }
-
     private void DrawBottomButtons(Rect rect)
     {
         float buttonWidth = 160f;
@@ -142,14 +115,7 @@ public sealed class Dialog_ManageSeparateStock : Window
 
         if (Widgets.ButtonText(resetRect, "SeparateStock_Reset".Translate()))
         {
-            foreach (var tr in _loadTransferables)
-            {
-                tr.AdjustTo(0);
-            }
-            foreach (var tr in _unloadTransferables)
-            {
-                tr.AdjustTo(0);
-            }
+            ResetTransferCounts();
         }
 
         if (Widgets.ButtonText(acceptRect, "AcceptButton".Translate()))
@@ -161,14 +127,14 @@ public sealed class Dialog_ManageSeparateStock : Window
     private void TryAccept()
     {
         var createdAny = false;
-        var loadRequests = BuildTransferRequests(_loadTransferables, TransferDirection.ColonyToStock);
+        var loadRequests = BuildTransferRequests(_loadTransferables, TransferDirection.ColonyToStock, fromStock: false);
         if (loadRequests.Count > 0)
         {
             _manager.CreateOperation(TransferDirection.ColonyToStock, loadRequests);
             createdAny = true;
         }
 
-        var unloadRequests = BuildTransferRequests(_unloadTransferables, TransferDirection.StockToColony);
+        var unloadRequests = BuildTransferRequests(_unloadTransferables, TransferDirection.StockToColony, fromStock: true);
         if (unloadRequests.Count > 0)
         {
             _manager.CreateOperation(TransferDirection.StockToColony, unloadRequests);
@@ -185,18 +151,31 @@ public sealed class Dialog_ManageSeparateStock : Window
         Close(doCloseSound: true);
     }
 
-    private static List<TransferThing> BuildTransferRequests(List<TransferableOneWay> transferables, TransferDirection direction)
+    private void ResetTransferCounts()
+    {
+        foreach (var tr in _loadTransferables)
+        {
+            tr.AdjustTo(0);
+        }
+        foreach (var tr in _unloadTransferables)
+        {
+            tr.AdjustTo(0);
+        }
+    }
+
+    private static List<TransferThing> BuildTransferRequests(List<TransferableOneWay> transferables, TransferDirection direction, bool fromStock)
     {
         var result = new List<TransferThing>();
         for (int i = 0; i < transferables.Count; i++)
         {
             var transferable = transferables[i];
-            if (transferable.CountToTransfer <= 0)
+            int desired = fromStock ? transferable.CountToTransferToSource : transferable.CountToTransfer;
+            if (desired <= 0)
             {
                 continue;
             }
 
-            int remaining = transferable.CountToTransfer;
+            int remaining = desired;
             foreach (var thing in transferable.things.Where(t => t != null && !t.Destroyed))
             {
                 if (remaining <= 0)
