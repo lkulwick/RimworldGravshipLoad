@@ -63,9 +63,24 @@ public class WorkGiver_SeparateStockTransfer : WorkGiver_Scanner
             return null;
         }
 
+        int capacity = int.MaxValue;
+        if (transfer.Direction == TransferDirection.ColonyToStock)
+        {
+            capacity = destination.Cell.GetItemStackSpaceLeftFor(pawn.Map, t.def);
+            if (capacity <= 0)
+            {
+                manager.ReleaseTransfer(transfer);
+                return null;
+            }
+        }
+
         manager.ReserveTransfer(transfer, pawn);
         int carryCount = transfer.RemainingCount;
         carryCount = Mathf.Min(carryCount, t.stackCount);
+        if (transfer.Direction == TransferDirection.ColonyToStock)
+        {
+            carryCount = Mathf.Min(carryCount, capacity);
+        }
         if (carryCount <= 0)
         {
             manager.ReleaseTransfer(transfer);

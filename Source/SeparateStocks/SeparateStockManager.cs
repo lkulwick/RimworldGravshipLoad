@@ -361,6 +361,12 @@ public sealed class SeparateStockManager : MapComponent
                     continue;
                 }
 
+                int stackSpace = candidate.GetItemStackSpaceLeftFor(map, thing.def);
+                if (stackSpace <= 0)
+                {
+                    continue;
+                }
+
                 cell = candidate;
                 parent = group.parent;
                 return true;
@@ -368,6 +374,76 @@ public sealed class SeparateStockManager : MapComponent
         }
 
         return false;
+    }
+
+    public bool TryFindStorageCellMatchingStock(Thing thing, Pawn carrier, Map map, StoragePriority currentPriority, Faction faction, bool requireSeparateStock, out IntVec3 cell)
+    {
+        cell = IntVec3.Invalid;
+        if (thing == null || map == null)
+        {
+            return false;
+        }
+
+        var reference = carrier?.Position ?? thing.PositionHeld;
+        var currentCell = thing.Spawned ? thing.PositionHeld : IntVec3.Invalid;
+        var groups = map.haulDestinationManager.AllGroupsListInPriorityOrder;
+        StoragePriority bestPriority = StoragePriority.Unstored;
+        float bestDistSquared = float.MaxValue;
+
+        for (int i = 0; i < groups.Count; i++)
+        {
+            var group = groups[i];
+            if (group?.parent == null)
+            {
+                continue;
+            }
+
+            if (ParentInSeparateStock(group.parent) != requireSeparateStock)
+            {
+                continue;
+            }
+
+            if (!group.parent.HaulDestinationEnabled)
+            {
+                continue;
+            }
+
+            var settings = group.Settings;
+            var priority = settings.Priority;
+            if ((int)priority <= (int)currentPriority)
+            {
+                break;
+            }
+
+            if (!settings.AllowedToAccept(thing))
+            {
+                continue;
+            }
+
+            var cellsList = group.CellsList;
+            for (int j = 0; j < cellsList.Count; j++)
+            {
+                var candidate = cellsList[j];
+                if (currentCell.IsValid && candidate == currentCell)
+                {
+                    continue;
+                }
+                if (!StoreUtility.IsGoodStoreCell(candidate, map, thing, carrier, faction))
+                {
+                    continue;
+                }
+
+                float dist = reference.IsValid ? candidate.DistanceToSquared(reference) : 0f;
+                if (!cell.IsValid || (priority > bestPriority) || (priority == bestPriority && dist < bestDistSquared))
+                {
+                    cell = candidate;
+                    bestPriority = priority;
+                    bestDistSquared = dist;
+                }
+            }
+        }
+
+        return cell.IsValid;
     }
 
     public static SeparateStockManager TryGet(Map map)

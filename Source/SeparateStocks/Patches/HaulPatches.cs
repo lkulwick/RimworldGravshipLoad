@@ -62,6 +62,12 @@ namespace Deep_Gravload.SeparateStocks.Patches
                 return;
             }
 
+            if (manager.TryFindStorageCellMatchingStock(t, carrier, map, currentPriority, faction, thingInSeparate, out var replacement))
+            {
+                foundCell = replacement;
+                return;
+            }
+
             __result = false;
             foundCell = IntVec3.Invalid;
         }
