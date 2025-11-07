@@ -51,6 +51,25 @@ namespace Deep_Gravload.SeparateStocks.Patches
 
             bool cellInSeparate = manager.CellBelongsToSeparateStock(foundCell);
             bool thingInSeparate = manager.ThingInSeparateStock(t);
+            if (!thingInSeparate && carrier?.CurJob != null)
+            {
+                var job = carrier.CurJob;
+                var target = job.targetB;
+                if (target.IsValid)
+                {
+                    if (target.HasThing)
+                    {
+                        if (manager.ThingInSeparateStock(target.Thing))
+                        {
+                            thingInSeparate = true;
+                        }
+                    }
+                    else if (manager.CellBelongsToSeparateStock(target.Cell))
+                    {
+                        thingInSeparate = true;
+                    }
+                }
+            }
 
             if (cellInSeparate == thingInSeparate)
             {

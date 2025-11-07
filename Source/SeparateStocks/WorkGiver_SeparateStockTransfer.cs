@@ -45,6 +45,14 @@ public class WorkGiver_SeparateStockTransfer : WorkGiver_Scanner
             return false;
         }
 
+        if (transfer.Direction == TransferDirection.ColonyToStock)
+        {
+            if (!manager.TryFindStorageCellForTransfer(pawn, t, out _, out _))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -69,6 +77,7 @@ public class WorkGiver_SeparateStockTransfer : WorkGiver_Scanner
             capacity = destination.Cell.GetItemStackSpaceLeftFor(pawn.Map, t.def);
             if (capacity <= 0)
             {
+                Messages.Message("SeparateStock_NoRoom".Translate(), MessageTypeDefOf.RejectInput, historical: false);
                 manager.ReleaseTransfer(transfer);
                 return null;
             }
