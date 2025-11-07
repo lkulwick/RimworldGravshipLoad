@@ -6,6 +6,23 @@ namespace Deep_Gravload.SeparateStocks
 {
 public static class SeparateStockUtility
 {
+    private static int _playerFloatMenuDepth;
+
+    public static bool PlayerFloatMenuOpen => _playerFloatMenuDepth > 0;
+
+    public static void PushPlayerFloatMenu()
+    {
+        _playerFloatMenuDepth++;
+    }
+
+    public static void PopPlayerFloatMenu()
+    {
+        if (_playerFloatMenuDepth > 0)
+        {
+            _playerFloatMenuDepth--;
+        }
+    }
+
     public static SeparateStockManager ManagerFor(Map map)
     {
         return SeparateStockManager.TryGet(map);

@@ -842,7 +842,16 @@ public sealed class SeparateStockRecord : IExposable
     public void CleanupDestroyedMembers()
     {
         _zones.RemoveAll(z => z == null || z.Map != _manager.map);
-        _buildings.RemoveAll(b => b == null || b.Destroyed || b.Map != _manager.map);
+        _buildings.RemoveAll(b =>
+        {
+            if (b == null || b.Destroyed)
+            {
+                return true;
+            }
+
+            var map = b.Map;
+            return map != null && map != _manager.map;
+        });
         RebuildCells();
     }
 

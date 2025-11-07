@@ -21,7 +21,7 @@ namespace Deep_Gravload.SeparateStocks.Patches
                 return;
             }
 
-            if (manager.ThingInSeparateStock(t) && !forced)
+            if (!manager.SeparateStock.AllowPawnAutoUse && manager.ThingInSeparateStock(t) && !forced)
             {
                 if (p.CurJob != null && p.CurJob.def == SeparateStockDefOf.SeparateStockTransfer)
                 {

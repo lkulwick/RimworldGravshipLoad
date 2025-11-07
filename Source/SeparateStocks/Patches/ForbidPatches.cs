@@ -30,6 +30,11 @@ namespace Deep_Gravload.SeparateStocks.Patches
                 return;
             }
 
+            if (SeparateStockUtility.PlayerFloatMenuOpen)
+            {
+                return;
+            }
+
             if (!manager.ThingInSeparateStock(t))
             {
                 return;
