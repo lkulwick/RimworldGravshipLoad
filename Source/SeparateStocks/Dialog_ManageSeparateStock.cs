@@ -79,32 +79,47 @@ public sealed class Dialog_ManageSeparateStock : Window
             return;
         }
 
-        var topRect = new Rect(inRect.x, inRect.y, inRect.width, 32f);
-        DrawHeader(topRect);
+        const float pendingHeight = 150f;
+        const float bottomHeight = 45f;
+        const float sectionSpacing = 4f;
 
-        float pendingHeight = 150f;
-        var pendingRect = new Rect(inRect.x, topRect.yMax + 4f, inRect.width, pendingHeight);
+        float curY = inRect.y;
+        float headerHeight = DrawHeader(new Rect(inRect.x, curY, inRect.width, 0f));
+        curY += headerHeight + sectionSpacing;
+
+        var pendingRect = new Rect(inRect.x, curY, inRect.width, pendingHeight);
         DrawPendingTransfers(pendingRect);
+        curY = pendingRect.yMax + sectionSpacing;
 
-        var widgetRect = new Rect(inRect.x, pendingRect.yMax + 4f, inRect.width, inRect.height - topRect.height - pendingHeight - 60f - 8f);
-        _transferWidget.OnGUI(widgetRect, out _);
+        float widgetBottom = inRect.yMax - bottomHeight - sectionSpacing;
+        float widgetHeight = Mathf.Max(0f, widgetBottom - curY);
+        var widgetRect = new Rect(inRect.x, curY, inRect.width, widgetHeight);
+        GUI.BeginGroup(widgetRect);
+        var widgetInnerRect = new Rect(0f, 0f, widgetRect.width, widgetRect.height);
+        _transferWidget.OnGUI(widgetInnerRect, out _);
+        GUI.EndGroup();
 
-        var bottomRect = new Rect(inRect.x, inRect.yMax - 45f, inRect.width, 45f);
+        var bottomRect = new Rect(inRect.x, inRect.yMax - bottomHeight, inRect.width, bottomHeight);
         DrawBottomButtons(bottomRect);
     }
 
-    private void DrawHeader(Rect rect)
+    private float DrawHeader(Rect rect)
     {
-        Widgets.Label(rect, "SeparateStock_Header".Translate());
-        rect.y += 24f;
-        rect.height = 24f;
+        string headerText = "SeparateStock_Header".Translate();
+        float textHeight = Text.CalcHeight(headerText, rect.width);
+        var headerRect = new Rect(rect.x, rect.y, rect.width, textHeight);
+        Widgets.Label(headerRect, headerText);
+
+        var checkboxRect = new Rect(rect.x, headerRect.yMax + 6f, rect.width, 24f);
         bool allowUse = _manager.SeparateStock.AllowPawnAutoUse;
-        Widgets.CheckboxLabeled(rect, "SeparateStock_AllowAutoUse".Translate(), ref allowUse);
+        Widgets.CheckboxLabeled(checkboxRect, "SeparateStock_AllowAutoUse".Translate(), ref allowUse);
         if (allowUse != _manager.SeparateStock.AllowPawnAutoUse)
         {
             _manager.SeparateStock.AllowPawnAutoUse = allowUse;
             SeparateStockLog.Message($"AllowPawnAutoUse toggled: {allowUse}");
         }
+
+        return checkboxRect.yMax - rect.y;
     }
 
     private void DrawPendingTransfers(Rect rect)
