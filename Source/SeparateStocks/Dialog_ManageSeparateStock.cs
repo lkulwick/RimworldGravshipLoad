@@ -35,8 +35,8 @@ public sealed class Dialog_ManageSeparateStock : Window
     {
         BuildTransferables();
         _transferWidget = new TransferableOneWayWidget(null, null, null, "SeparateStock_SourceCountTip".Translate(), drawMass: false);
-        _transferWidget.AddSection("SeparateStock_LoadLabel".Translate(), _loadTransferables);
         _transferWidget.AddSection("SeparateStock_UnloadLabel".Translate(), _unloadTransferables);
+        _transferWidget.AddSection("SeparateStock_LoadLabel".Translate(), _loadTransferables);
     }
 
     private void BuildTransferables()
@@ -87,17 +87,16 @@ public sealed class Dialog_ManageSeparateStock : Window
         float headerHeight = DrawHeader(new Rect(inRect.x, curY, inRect.width, 0f));
         curY += headerHeight + sectionSpacing;
 
-        var pendingRect = new Rect(inRect.x, curY, inRect.width, pendingHeight);
-        DrawPendingTransfers(pendingRect);
-        curY = pendingRect.yMax + sectionSpacing;
-
-        float widgetBottom = inRect.yMax - bottomHeight - sectionSpacing;
-        float widgetHeight = Mathf.Max(0f, widgetBottom - curY);
+        float widgetHeight = Mathf.Max(0f, inRect.yMax - curY - pendingHeight - bottomHeight - (sectionSpacing * 2));
         var widgetRect = new Rect(inRect.x, curY, inRect.width, widgetHeight);
         GUI.BeginGroup(widgetRect);
         var widgetInnerRect = new Rect(0f, 0f, widgetRect.width, widgetRect.height);
         _transferWidget.OnGUI(widgetInnerRect, out _);
         GUI.EndGroup();
+
+        curY = widgetRect.yMax + sectionSpacing;
+        var pendingRect = new Rect(inRect.x, curY, inRect.width, pendingHeight);
+        DrawPendingTransfers(pendingRect);
 
         var bottomRect = new Rect(inRect.x, inRect.yMax - bottomHeight, inRect.width, bottomHeight);
         DrawBottomButtons(bottomRect);
@@ -204,17 +203,11 @@ public sealed class Dialog_ManageSeparateStock : Window
     {
         float buttonWidth = 160f;
         var acceptRect = new Rect(rect.x + rect.width - buttonWidth, rect.y, buttonWidth, rect.height - 5f);
-        var resetRect = new Rect(acceptRect.x - buttonWidth - 10f, rect.y, buttonWidth, rect.height - 5f);
-        var cancelRect = new Rect(resetRect.x - buttonWidth - 10f, rect.y, buttonWidth, rect.height - 5f);
+        var cancelRect = new Rect(acceptRect.x - buttonWidth - 10f, rect.y, buttonWidth, rect.height - 5f);
 
         if (Widgets.ButtonText(cancelRect, "CancelButton".Translate()))
         {
             Close();
-        }
-
-        if (Widgets.ButtonText(resetRect, "SeparateStock_Reset".Translate()))
-        {
-            ResetTransferCounts();
         }
 
         if (Widgets.ButtonText(acceptRect, "AcceptButton".Translate()))
@@ -222,7 +215,6 @@ public sealed class Dialog_ManageSeparateStock : Window
             TryAccept();
         }
     }
-
     private void TryAccept()
     {
         var createdAny = false;
@@ -248,18 +240,6 @@ public sealed class Dialog_ManageSeparateStock : Window
 
         SeparateStockLog.Message("Transfer operations queued from dialog.");
         Close(doCloseSound: true);
-    }
-
-    private void ResetTransferCounts()
-    {
-        foreach (var tr in _loadTransferables)
-        {
-            tr.AdjustTo(0);
-        }
-        foreach (var tr in _unloadTransferables)
-        {
-            tr.AdjustTo(0);
-        }
     }
 
     private static List<TransferThing> BuildTransferRequests(List<TransferableOneWay> transferables, TransferDirection direction, bool fromStock)

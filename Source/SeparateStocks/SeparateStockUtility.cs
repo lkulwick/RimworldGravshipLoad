@@ -74,6 +74,10 @@ public static class SeparateStockUtility
             {
                 continue;
             }
+            if (map.haulDestinationManager.SlotGroupAt(thing.Position) == null)
+            {
+                continue;
+            }
             yield return thing;
         }
     }

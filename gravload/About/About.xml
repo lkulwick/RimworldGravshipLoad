@@ -7,8 +7,13 @@
     <li>1.6</li>
   </supportedVersions>
   <description><![CDATA[
-Coordinate colony and gravship logistics with managed stockpiles and a streamlined cargo loading interface.
+Lock down critical supplies, keep the gravship loaded, and stop colonists from “borrowing” your launch fuel. Gravload adds:
 
-Subject to change while core systems are under active development.
+• Separate-stock designations for any stockpile or storage building.
+• A dedicated management dialog for loading and unloading stacks.
+• Pending transfer tracking so you can cancel individual jobs mid-haul.
+• Pawn safeguards—if auto use is disabled, haulers ignore the protected cells unless ordered otherwise.
+
+Target version: RimWorld 1.6. Compatible with vanilla storage rules; deep/virtual storage mods may need patches so their slot groups are discovered.
   ]]></description>
 </ModMetaData>
